@@ -1,4 +1,4 @@
-﻿namespace Ray.BiliBiliTool.Config.Options;
+namespace Ray.BiliBiliTool.Config.Options;
 
 /// <summary>
 /// 粉丝牌等级任务相关配置
@@ -23,7 +23,7 @@ public class LiveFansMedalTaskOptions : BaseConfigOptions
     public int HeartBeatSendGiveUpThreshold { get; set; } = 5;
 
     /// <summary>
-    /// 对于直播时长任务是否跳过粉丝牌等级大于等于 20 的
+    /// 对于直播时长任务是否跳过粉丝牌等级大于等于 100 的
     /// </summary>
     public bool IsSkipLevel20Medal { get; set; } = true;
 

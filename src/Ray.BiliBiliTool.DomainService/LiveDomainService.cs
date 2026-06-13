@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Ray.BiliBiliTool.Agent;
@@ -657,7 +657,7 @@ public class LiveDomainService(
         foreach (var medal in medalWallInfo.Data.List)
         {
             logger.LogInformation("【主播】{name} ", medal.Target_name);
-            if (_liveFansMedalTaskOptions.IsSkipLevel20Medal && medal.Medal_info.Level >= 20)
+            if (_liveFansMedalTaskOptions.IsSkipLevel20Medal && medal.Medal_info.Level >= 100)
             {
                 logger.LogInformation(
                     "粉丝牌等级为 {level}，观看将不再增长亲密度，跳过",
@@ -718,21 +718,37 @@ public class LiveDomainService(
         {
             logger.LogInformation("检测到直播 Cookie 未正确配置，尝试自动配置中...");
 
-            // 请求主播主页来正确配置 cookie
-            var liveHome = await liveApi.GetLiveHome(ck.ToString());
-            var liveHomeContent = JsonConvert.DeserializeObject<BiliApiResponse>(
-                await liveHome.Content.ReadAsStringAsync()
-            );
-            if (liveHomeContent?.Code != 0)
+            // 直接从已有Cookie中提取LiveBuvid或生成默认值，避免使用共享HTTP客户端的Cookie容器
+            // 1. 尝试从已有Cookie字典中查找
+            if (
+                ck.CookieItemDictionary.TryGetValue("LIVE_BUVID", out string? liveBuvid)
+                && !string.IsNullOrWhiteSpace(liveBuvid)
+            )
             {
-                throw new Exception(liveHomeContent?.Message);
+                logger.LogDebug("从已有Cookie中获取到LiveBuvid: {value}", liveBuvid);
+                logger.LogInformation("直播 Cookie 配置成功！");
+                return true;
             }
-
-            var setHeader = liveHome.Headers.FirstOrDefault(header => header.Key == "Set-Cookie");
-            ck.MergeCurrentCookie(setHeader.Value.ToList());
-
-            logger.LogDebug("LiveBuvid {value}", ck.LiveBuvid);
+            
+            // 2. 尝试从已有Cookie中查找buvid3，生成默认LiveBuvid
+            if (
+                ck.CookieItemDictionary.TryGetValue("buvid3", out string? buvid3)
+                && !string.IsNullOrWhiteSpace(buvid3)
+            )
+            {
+                string defaultLiveBuvid = buvid3;
+                ck.CookieItemDictionary["LIVE_BUVID"] = defaultLiveBuvid;
+                logger.LogDebug("使用buvid3生成默认LiveBuvid: {value}", defaultLiveBuvid);
+                logger.LogInformation("直播 Cookie 配置成功！");
+                return true;
+            }
+            
+            // 3. 生成随机LiveBuvid
+            string randomLiveBuvid = "DE" + Guid.NewGuid().ToString("N").Substring(0, 30);
+            ck.CookieItemDictionary["LIVE_BUVID"] = randomLiveBuvid;
+            logger.LogDebug("生成随机LiveBuvid: {value}", randomLiveBuvid);
             logger.LogInformation("直播 Cookie 配置成功！");
+            return true;
         }
         catch (Exception exception)
         {

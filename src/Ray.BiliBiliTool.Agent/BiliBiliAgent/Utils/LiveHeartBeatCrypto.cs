@@ -1,5 +1,8 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text;
+using Org.BouncyCastle.Crypto.Digests;
+using Org.BouncyCastle.Crypto.Macs;
+using Org.BouncyCastle.Crypto.Parameters;
 
 namespace Ray.BiliBiliTool.Agent.BiliBiliAgent.Utils;
 
@@ -39,16 +42,32 @@ public class LiveHeartBeatCrypto
 
     private static string Hash(string text, string key, string algorithmName)
     {
-        HMAC hamc = algorithmName.ToUpperInvariant() switch
+        if (algorithmName.Equals("HMACSHA224", StringComparison.OrdinalIgnoreCase))
         {
-            "HMACSHA256" => new HMACSHA256(Encoding.UTF8.GetBytes(key)),
-            "HMACSHA1" => new HMACSHA1(Encoding.UTF8.GetBytes(key)),
-            "HMACMD5" => new HMACMD5(Encoding.UTF8.GetBytes(key)),
-            _ => throw new ArgumentException($"Unsupported algorithm: {algorithmName}"),
-        };
+            return HashWithBouncyCastle(text, key, new Sha224Digest());
+        }
 
-        using HMAC hmac = hamc;
-        byte[] hashBytes = hamc.ComputeHash(Encoding.UTF8.GetBytes(text));
-        return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+        using HMAC? hmac = HMAC.Create(algorithmName);
+        if (hmac == null)
+        {
+            throw new ArgumentException($"Unsupported algorithm: {algorithmName}");
+        }
+
+        hmac.Key = Encoding.UTF8.GetBytes(key);
+        byte[] hashBytes = hmac.ComputeHash(Encoding.UTF8.GetBytes(text));
+        return Convert.ToHexString(hashBytes).ToLowerInvariant();
+    }
+
+    private static string HashWithBouncyCastle(string text, string key, Sha224Digest digest)
+    {
+        var hmac = new HMac(digest);
+        hmac.Init(new KeyParameter(Encoding.UTF8.GetBytes(key)));
+
+        byte[] inputBytes = Encoding.UTF8.GetBytes(text);
+        hmac.BlockUpdate(inputBytes, 0, inputBytes.Length);
+
+        byte[] hashBytes = new byte[hmac.GetMacSize()];
+        hmac.DoFinal(hashBytes, 0);
+        return Convert.ToHexString(hashBytes).ToLowerInvariant();
     }
 }

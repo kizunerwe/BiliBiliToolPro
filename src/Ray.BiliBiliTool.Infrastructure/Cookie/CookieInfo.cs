@@ -1,4 +1,4 @@
-﻿namespace Ray.BiliBiliTool.Infrastructure.Cookie;
+namespace Ray.BiliBiliTool.Infrastructure.Cookie;
 
 public class CookieInfo(Dictionary<string, string> cookieDic)
 {
@@ -72,6 +72,10 @@ public class CookieInfo(Dictionary<string, string> cookieDic)
     /// <returns></returns>
     private static List<string> ConvertSetCkHeadersToCkItemList(IEnumerable<string> setCookieList)
     {
+        if (setCookieList == null)
+        {
+            return new List<string>();
+        }
         return setCookieList
             .Select(item => item.Split(';').FirstOrDefault()?.Trim() ?? "")
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -96,7 +100,13 @@ public class CookieInfo(Dictionary<string, string> cookieDic)
     /// <returns></returns>
     private static List<string> ConvertCkStrToCkItemList(string ckStr)
     {
-        return ckStr.Split(";", StringSplitOptions.TrimEntries).ToList();
+        if (string.IsNullOrWhiteSpace(ckStr))
+        {
+            return new List<string>();
+        }
+        return ckStr
+            .Split(";", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
     }
 
     /// <summary>
@@ -118,7 +128,13 @@ public class CookieInfo(Dictionary<string, string> cookieDic)
         IEnumerable<string> ckItemList
     )
     {
-        return ckItemList.ToDictionary(
+        if (ckItemList == null)
+        {
+            return new Dictionary<string, string>();
+        }
+        return ckItemList
+            .Where(item => !string.IsNullOrWhiteSpace(item) && item.Contains('='))
+            .ToDictionary(
             k => k[..k.IndexOf("=", StringComparison.Ordinal)].Trim(),
             v => v[(v.IndexOf("=", StringComparison.Ordinal) + 1)..].Trim().TrimEnd(';')
         );

@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" />
     <PackageReference Include="Microsoft.Extensions.Http.Polly" />
     <PackageReference Include="Scrutor" />
     <PackageReference Include="WebApiClientCore" />
