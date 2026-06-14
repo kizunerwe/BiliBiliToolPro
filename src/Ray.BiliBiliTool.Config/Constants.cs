@@ -1,4 +1,4 @@
-﻿namespace Ray.BiliBiliTool.Config;
+namespace Ray.BiliBiliTool.Config;
 
 public static class Constants
 {
@@ -15,7 +15,9 @@ public static class Constants
     /// <summary>
     /// 开源地址
     /// </summary>
-    public static string SourceCodeUrl = "https://github.com/RayWangQvQ/BiliBiliToolPro";
+    public const string SourceCodeUrl = "https://github.com/kizunerwe/BiliBiliToolPro";
+
+    public static string QingLongReadmeUrl = $"{SourceCodeUrl}/blob/main/qinglong/README.md";
 
     public static string FallbackAutoChargeUpId = "220893216";
 

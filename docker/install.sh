@@ -20,10 +20,11 @@ echo ' |____/|_|_|_| |_|\___/ \___/|_| '
 current_dir=$(pwd)
 base_dir="${current_dir}/bili_tool_web"
 github_proxy=""
-github_branch="main"
-remote_compose_url="${github_proxy}https://raw.githubusercontent.com/RayWangQvQ/BiliBiliToolPro/refs/heads/${github_branch}/docker/sample/docker-compose.yml"
-remote_ckJson_url="${github_proxy}https://raw.githubusercontent.com/RayWangQvQ/BiliBiliToolPro/refs/heads/${github_branch}/docker/sample/config/cookies.json"
-docker_img_name="ghcr.io/raywangqvq/bili_tool_web"
+github_repo="${BILI_GITHUB_REPO:-kizunerwe/BiliBiliToolPro}"
+github_branch="${BILI_GITHUB_BRANCH:-main}"
+remote_compose_url="${github_proxy}https://raw.githubusercontent.com/${github_repo}/refs/heads/${github_branch}/docker/sample/docker-compose.yml"
+remote_ckJson_url="${github_proxy}https://raw.githubusercontent.com/${github_repo}/refs/heads/${github_branch}/docker/sample/config/cookies.json"
+docker_img_name="${BILI_DOCKER_IMAGE:-ghcr.io/kizunerwe/bili_tool_web}"
 container_name="bili_tool_web"
 
 ### infra

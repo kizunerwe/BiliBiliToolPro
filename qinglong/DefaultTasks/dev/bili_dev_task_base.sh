@@ -10,11 +10,11 @@ set -u
 # This is causing it to fail
 set -o pipefail
 
-verbose=false                          # 开启debug日志
-bili_repo="raywangqvq/bilibilitoolpro" # 仓库地址
-bili_branch="_develop"                 # 分支名，空或_develop
-prefer_mode=${BILI_MODE:-"dotnet"}     # dotnet或bilitool，需要通过环境变量配置
-github_proxy=${BILI_GITHUB_PROXY:-""}  # 下载github release包时使用的代理，会拼在地址前面，需要通过环境变量配置
+verbose=false                                 # 开启debug日志
+bili_repo=${BILI_REPO:-"kizunerwe/bilibilitoolpro"} # 仓库地址
+bili_branch=${BILI_BRANCH:-"_develop"}        # 分支名，空或_develop
+prefer_mode=${BILI_MODE:-"dotnet"}            # dotnet或bilitool，需要通过环境变量配置
+github_proxy=${BILI_GITHUB_PROXY:-""}         # 下载github release包时使用的代理，会拼在地址前面，需要通过环境变量配置
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 # 解决抽风问题
 
 # Use in the the functions: eval $invocation
@@ -73,7 +73,7 @@ MemoryWarn=${MemoryWarn:-""}
 DiskWarn=${DiskWarn:-""}
 
 dir_repo=${dir_repo:-"$QL_DIR/data/repo"}
-# 需要兼容老版本青龙，https://github.com/RayWangQvQ/BiliBiliToolPro/issues/728
+# 需要兼容老版本青龙
 if [ ! -d "$dir_repo" ] && [ -d "$QL_DIR/repo" ]; then
   dir_repo="$QL_DIR/repo"
 fi
@@ -84,8 +84,15 @@ touch /root/.bashrc && . /root/.bashrc
 # 目录
 say "青龙repo目录: $dir_repo"
 qinglong_bili_repo="$(echo "$bili_repo" | sed 's/\//_/g')${bili_branch}"
-qinglong_bili_repo_dir="$(find $dir_repo -type d \( -iname $qinglong_bili_repo -o -iname ${qinglong_bili_repo}_main \) | head -1)"
+qinglong_bili_repo_dir="$(find "$dir_repo" -type d \( -iname "$qinglong_bili_repo" -o -iname "${qinglong_bili_repo}_main" \) | head -1)"
 say "bili仓库目录: $qinglong_bili_repo_dir"
+
+if [ -z "$qinglong_bili_repo_dir" ]; then
+  say_err "未找到 bili 仓库目录"
+  say_err "查找目标：$qinglong_bili_repo"
+  say_err "请确认已在青龙中拉取仓库 ${bili_repo}${bili_branch}，或通过环境变量 BILI_REPO / BILI_BRANCH 覆盖默认值"
+  exit 1
+fi
 
 current_linux_os="debian"  # 或alpine
 current_os="linux"         # 或linux-musl
@@ -94,8 +101,8 @@ machine_architecture="x64" # 或arm、arm64
 bilitool_installed_version=0
 
 # 以下操作仅在bilitool仓库的根bin文件下执行
-cd $qinglong_bili_repo_dir
-mkdir -p bin && cd $qinglong_bili_repo_dir/bin
+cd "$qinglong_bili_repo_dir"
+mkdir -p bin && cd "$qinglong_bili_repo_dir/bin"
 
 # 判断是否存在某指令
 machine_has() {
@@ -383,7 +390,7 @@ get_download_url() {
     eval $invocation
 
     tag=$1
-    url="${github_proxy}https://github.com/RayWangQvQ/BiliBiliToolPro/releases/download/$tag/bilibili-tool-pro-v$tag-$current_os-$machine_architecture.zip"
+    url="${github_proxy}https://github.com/${bili_repo}/releases/download/$tag/bilibili-tool-pro-v$tag-$current_os-$machine_architecture.zip"
     say "下载地址：$url"
     echo $url
     return 0
@@ -436,14 +443,14 @@ install() {
             install_dotnet || {
                 say_err "安装失败"
                 say_err "请根据文档自行在青龙容器中安装dotnet：https://learn.microsoft.com/zh-cn/dotnet/core/install/linux-$current_linux_os"
-                say_err "或者尝试切换运行模式为bilitool，它不需要安装dotnet：https://github.com/RayWangQvQ/BiliBiliToolPro/blob/develop/qinglong/README.md"
+                say_err "或者尝试切换运行模式为bilitool，它不需要安装dotnet：https://github.com/${bili_repo}/blob/main/qinglong/README.md"
             }
         fi
 
         if [ "$prefer_mode" == "bilitool" ]; then
             install_bilitool || {
                 say_err "安装失败，请检查日志并重试"
-                say_err "或者尝试切换运行模式为dotnet：https://github.com/RayWangQvQ/BiliBiliToolPro/blob/develop/qinglong/README.md"
+                say_err "或者尝试切换运行模式为dotnet：https://github.com/${bili_repo}/blob/main/qinglong/README.md"
             }
         fi
     fi
@@ -458,12 +465,12 @@ run_task() {
     export Ray_PlatformType=QingLong
     export Ray_RunTasks=$target_code
 
-    cd $qinglong_bili_repo_dir/src/Ray.BiliBiliTool.Console
+    cd "$qinglong_bili_repo_dir/src/Ray.BiliBiliTool.Console"
 
     if [ "$prefer_mode" == "dotnet" ]; then
         dotnet run --ENVIRONMENT=Production
     else
-        cp -f $qinglong_bili_repo_dir/bin/Ray.BiliBiliTool.Console .
+        cp -f "$qinglong_bili_repo_dir/bin/Ray.BiliBiliTool.Console" .
         chmod +x ./Ray.BiliBiliTool.Console && ./Ray.BiliBiliTool.Console --ENVIRONMENT=Production
     fi
 }

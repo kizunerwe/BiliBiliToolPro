@@ -4,14 +4,14 @@
 
 BiliBiliTool 是一个自动执行任务的工具，当我们忘记做某项任务时，它会像一个贴心小助手，按照我们预先吩咐它的命令，在指定频率、时间范围内帮助我们完成计划的任务。
 
-[Overview of BiliBili Tool](https://github.com/RayWangQvQ/BiliBiliToolPro)
+[Overview of BiliBili Tool](https://github.com/kizunerwe/BiliBiliToolPro)
 
 ## TL;DR
 
 ### 在集群中通过chart部署
 
 ```console
-$ git clone https://github.com/RayWangQvQ/BiliBiliToolPro.git
+$ git clone https://github.com/kizunerwe/BiliBiliToolPro.git
 $ cd ${local_code_repo}/helm/bilibili-tool
 [optional]$ vim values.yaml # provides your own settings like cookies
 $ helm install <my_release_name> .
@@ -27,7 +27,7 @@ $kubectl logs -f <pod_name>
 
 ## Introduction
 
-这个chart通过[Helm](https://helm.sh)在[Kubernetes](https://kubernetes.io)集群上拉起一个[BiliBiliToolPro](https://github.com/RayWangQvQ/BiliBiliToolPro)deployment
+这个chart通过[Helm](https://helm.sh)在[Kubernetes](https://kubernetes.io)集群上拉起一个[BiliBiliToolPro](https://github.com/kizunerwe/BiliBiliToolPro)deployment
 
 ## Prerequisites
 
@@ -85,7 +85,7 @@ $helm delete my-release
 | `affinity`                                          | Affinity for pod assignment                                                                                                                                                                       | `{}`            | false |
 | `nodeSelector`                                      | Node labels for pod assignment                                                                                                                                                                    | `{}`            | false |
 | `tolerations`                                       | Tolerations for pod assignment                                                                                                                                                                    | `[]`            | false |
-| `env` | Environment variables for the BiliBili Tool container, Ray_BiliBiliCookies__1 and Ray_DailyTaskConfig__Cron are required, others vars pls take a look at [supported envvars](https://github.com/RayWangQvQ/BiliBiliToolPro/blob/main/docs/configuration.md) | `[]` | true |
+| `env` | Environment variables for the BiliBili Tool container, Ray_BiliBiliCookies__1 and Ray_DailyTaskConfig__Cron are required, others vars pls take a look at [supported envvars](https://github.com/kizunerwe/BiliBiliToolPro/blob/main/docs/configuration.md) | `[]` | true |
 | `volumes.log.enabled` | Enable persistent log volume for BiliBili Tool or not | `"false"` | true |
 | `volumes.log.path` | The host path mounted into pod | `"/tmp/Logs"` | false |
 | `volumes.log.name` | The volume name | `"bili-tool-vol"` | false |

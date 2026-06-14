@@ -19,7 +19,7 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# For more envs pls take a view at https://github.com/RayWangQvQ/BiliBiliToolPro/blob/main/docs/configuration.md
+# For more envs pls take a view at https://github.com/kizunerwe/BiliBiliToolPro/blob/main/docs/configuration.md
 env:
   # cookie - required
   - name: Ray_BiliBiliCookies__1

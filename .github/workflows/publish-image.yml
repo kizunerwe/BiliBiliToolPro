@@ -16,8 +16,8 @@ env:
   DOCKERHUB_PASSWORD : ${{ secrets.DOCKERHUB_PASSWORD }}
   GHCR_USERNAME: ${{ github.repository_owner }}
   GHCR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-  DOCKER_IMG_NAME: "zai7lou/bili_tool_web"
-  GHC_IMG_NAME: "ghcr.io/raywangqvq/bili_tool_web"
+  DOCKER_IMG_NAME: "${{ github.repository_owner }}/bili_tool_web"
+  GHC_IMG_NAME: "ghcr.io/${{ github.repository_owner }}/bili_tool_web"
 
 jobs:
   PublishImage:

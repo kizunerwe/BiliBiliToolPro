@@ -14,7 +14,7 @@
 
 跑什么任务，可以在`Ray.BiliBiliTool.Console`项目下的`appsettings.json`文件里的`RunTasks`指定。
 
-对于不是开发者的朋友，可以通过下载 [BiliBiliTool/release](https://github.com/RayWangQvQ/BiliBiliToolPro/releases) 到本地或任意服务器运行。
+对于不是开发者的朋友，可以通过下载 [BiliBiliTool/release](https://github.com/kizunerwe/BiliBiliToolPro/releases) 到本地或任意服务器运行。
 
 ## 1. 任意系统，但已安装`.NET 8.0`
 
@@ -40,7 +40,7 @@ P.S.这里的运行环境指的是 `.NET Runtime 8.0.0` ，安装方法可详见
 ## 3. Linux:
 
 ```
-wget https://github.com/RayWangQvQ/BiliBiliToolPro/releases/download/0.3.1/bilibili-tool-pro-v0.3.1-linux-x64.zip
+wget https://github.com/kizunerwe/BiliBiliToolPro/releases/download/0.3.1/bilibili-tool-pro-v0.3.1-linux-x64.zip
 unzip bilibili-tool-pro-v0.3.1-linux-x64.zip
 cd ./linux-x64/
 ./Ray.BiliBiliTool.Console --runTasks=Login

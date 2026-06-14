@@ -8,17 +8,13 @@ BiliTool
 
 </h1>
 
-[![GitHub Stars](https://img.shields.io/github/stars/RayWangQvQ/BiliBiliToolPro?style=flat-square)](https://github.com/RayWangQvQ/BiliBiliToolPro/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/RayWangQvQ/BiliBiliToolPro?style=flat-square)](https://github.com/RayWangQvQ/BiliBiliToolPro/network)
-[![GitHub Issues](https://img.shields.io/github/issues/RayWangQvQ/BiliBiliToolPro?style=flat-square)](https://github.com/RayWangQvQ/BiliBiliToolPro/issues)
-[![GitHub Contributors](https://img.shields.io/github/contributors/RayWangQvQ/BiliBiliToolPro?style=flat-square)](https://github.com/RayWangQvQ/BiliBiliToolPro/graphs/contributors)
-[![GitHub All Releases](https://img.shields.io/github/downloads/RayWangQvQ/BiliBiliToolPro/total?style=flat-square)](https://github.com/RayWangQvQ/BiliBiliToolPro/releases)
-[![GitHub Release (latest SemVer)](https://img.shields.io/github/v/release/RayWangQvQ/BiliBiliToolPro?style=flat-square)](https://github.com/RayWangQvQ/BiliBiliToolPro/releases)
-[![GitHub License](https://img.shields.io/github/license/RayWangQvQ/BiliBiliToolPro?style=flat-square)](https://github.com/RayWangQvQ/BiliBiliToolPro/blob/main/LICENSE)
-
-<a href="https://trendshift.io/repositories/3329" target="_blank">
-    <img src="https://trendshift.io/api/badge/repositories/3329" alt="RayWangQvQ%2FBiliBiliToolPro | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-</a>
+[![GitHub Stars](https://img.shields.io/github/stars/kizunerwe/BiliBiliToolPro?style=flat-square)](https://github.com/kizunerwe/BiliBiliToolPro/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/kizunerwe/BiliBiliToolPro?style=flat-square)](https://github.com/kizunerwe/BiliBiliToolPro/network)
+[![GitHub Issues](https://img.shields.io/github/issues/kizunerwe/BiliBiliToolPro?style=flat-square)](https://github.com/kizunerwe/BiliBiliToolPro/issues)
+[![GitHub Contributors](https://img.shields.io/github/contributors/kizunerwe/BiliBiliToolPro?style=flat-square)](https://github.com/kizunerwe/BiliBiliToolPro/graphs/contributors)
+[![GitHub All Releases](https://img.shields.io/github/downloads/kizunerwe/BiliBiliToolPro/total?style=flat-square)](https://github.com/kizunerwe/BiliBiliToolPro/releases)
+[![GitHub Release (latest SemVer)](https://img.shields.io/github/v/release/kizunerwe/BiliBiliToolPro?style=flat-square)](https://github.com/kizunerwe/BiliBiliToolPro/releases)
+[![GitHub License](https://img.shields.io/github/license/kizunerwe/BiliBiliToolPro?style=flat-square)](https://github.com/kizunerwe/BiliBiliToolPro/blob/main/LICENSE)
 
 </div>
 
@@ -69,7 +65,7 @@ BiliTool
 <!-- /TOC -->
 
 ---
-**Github 仓库地址：[RayWangQvQ/BiliBiliToolPro](https://github.com/RayWangQvQ/BiliBiliToolPro)**
+**Github 仓库地址：[kizunerwe/BiliBiliToolPro](https://github.com/kizunerwe/BiliBiliToolPro)**
 
 **注意：**
 
@@ -185,9 +181,9 @@ BiliTool 实现自动完成任务的原理，是通过调用一系列开放的ap
 
 [>>点击查看常见问题文档](docs/questions.md)
 
-[Issues（议题）](https://github.com/RayWangQvQ/BiliBiliToolPro/issues)板块可以用来提交**Bug**和**建议**；
+[Issues（议题）](https://github.com/kizunerwe/BiliBiliToolPro/issues)板块可以用来提交**Bug**和**建议**；
 
-[Discussions（讨论）](https://github.com/RayWangQvQ/BiliBiliToolPro/discussions)板块可以用来**提问**和**讨论**。
+[Discussions（讨论）](https://github.com/kizunerwe/BiliBiliToolPro/discussions)板块可以用来**提问**和**讨论**。
 
 大部分问题其实都可以在文档、议题和讨论中找到答案。
 
@@ -202,7 +198,7 @@ BiliTool 实现自动完成任务的原理，是通过调用一系列开放的ap
 
 ## 6. 版本发布及更新
 
-当前正处于稳定的迭代开发中，详细待更新和计划内容可参见 [Projects](https://github.com/RayWangQvQ/BiliBiliToolPro/projects) 和 [Issues](https://github.com/RayWangQvQ/BiliBiliToolPro/issues) 。
+当前正处于稳定的迭代开发中，详细待更新和计划内容可参见 [Projects](https://github.com/kizunerwe/BiliBiliToolPro/projects) 和 [Issues](https://github.com/kizunerwe/BiliBiliToolPro/issues) 。
 
 想要有重要更新时收到通知的话，可以把仓库右上角的`Star`按钮点亮。
 
@@ -273,4 +269,4 @@ BiliTool 实现自动完成任务的原理，是通过调用一系列开放的ap
 
 ❤️Thank you for your star to this project:
 
-[![Star History Chart](https://api.star-history.com/svg?repos=RayWangQvQ/BiliBiliToolPro&type=Date)](https://www.star-history.com/#RayWangQvQ/BiliBiliToolPro&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=kizunerwe/BiliBiliToolPro&type=Date)](https://www.star-history.com/#kizunerwe/BiliBiliToolPro&Date)

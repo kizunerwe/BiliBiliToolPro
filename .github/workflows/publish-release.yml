@@ -10,7 +10,6 @@ permissions:
 jobs:
   build:
     name: Publish Release
-    if: ${{ github.repository == 'RayWangQvQ/BiliBiliToolPro' }}
     runs-on: ubuntu-latest
 
     steps:

@@ -44,7 +44,7 @@
 ```
 名称：Bilibili
 类型：公开仓库
-链接：https://github.com/RayWangQvQ/BiliBiliToolPro.git
+链接：https://github.com/kizunerwe/BiliBiliToolPro.git
 定时类型：crontab
 定时规则：2 2 28 * *
 白名单：bili_task_.+\.sh
@@ -60,7 +60,7 @@
 
 ```
 名称：拉取Bili库
-命令：ql repo https://github.com/RayWangQvQ/BiliBiliToolPro.git "bili_task_"
+命令：ql repo https://github.com/kizunerwe/BiliBiliToolPro.git "bili_task_"
 定时规则：2 2 28 * *
 ```
 
@@ -131,8 +131,8 @@ Name分别为：
 如：
 
 ```
-https://github.moeyy.xyz/https://github.com/RayWangQvQ/BiliBiliToolPro.git
-https://gh-proxy.com/https://github.com/RayWangQvQ/BiliBiliToolPro.git
+https://github.moeyy.xyz/https://github.com/kizunerwe/BiliBiliToolPro.git
+https://gh-proxy.com/https://github.com/kizunerwe/BiliBiliToolPro.git
 ...
 ```
 

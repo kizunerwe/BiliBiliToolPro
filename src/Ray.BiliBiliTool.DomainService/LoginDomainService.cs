@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -415,7 +415,7 @@ public class LoginDomainService(
             logger.LogWarning("未配置青龙的ClientId和ClientSecret，无法自动获取token");
             logger.LogWarning(
                 "教程：{qingDoc}",
-                "https://github.com/RayWangQvQ/BiliBiliToolPro/blob/main/qinglong/README.md"
+                Ray.BiliBiliTool.Config.Constants.QingLongReadmeUrl
             );
             return "";
         }

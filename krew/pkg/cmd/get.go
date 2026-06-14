@@ -5,8 +5,8 @@ import (
 	"io"
 	"os/exec"
 
-	"github.com/RayWangQvQ/BiliBiliToolPro/krew/pkg/options"
-	helper "github.com/RayWangQvQ/BiliBiliToolPro/krew/pkg/utils"
+	"github.com/kizunerwe/BiliBiliToolPro/krew/pkg/options"
+	helper "github.com/kizunerwe/BiliBiliToolPro/krew/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
