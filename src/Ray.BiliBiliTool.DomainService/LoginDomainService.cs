@@ -23,6 +23,7 @@ namespace Ray.BiliBiliTool.DomainService;
 public class LoginDomainService(
     ILogger<LoginDomainService> logger,
     IPassportApi passportApi,
+    IUserInfoApi userInfoApi,
     IHostEnvironment hostingEnvironment,
     IQingLongApi qingLongApi,
     IHomeApi homeApi,
@@ -234,6 +235,7 @@ public class LoginDomainService(
     {
         try
         {
+            var userName = await TryGetUserNameAsync(ckInfo);
             var token = await GetQingLongAuthTokenAsync();
             if (string.IsNullOrEmpty(token))
             {
@@ -263,9 +265,11 @@ public class LoginDomainService(
                     id = oldEnv.id,
                     name = oldEnv.name,
                     value = ckInfo.CookieStr,
-                    remarks = string.IsNullOrEmpty(oldEnv.remarks)
-                        ? $"bili-{ckInfo.UserId}"
-                        : oldEnv.remarks,
+                    remarks = QingLongCookieRemarkFormatter.ResolveRemark(
+                        ckInfo.UserId,
+                        userName,
+                        oldEnv.remarks
+                    ),
                 };
 
                 var updateRe = await qingLongApi.UpdateEnvsAsync(update, token);
@@ -294,7 +298,7 @@ public class LoginDomainService(
             {
                 name = name,
                 value = ckInfo.CookieStr,
-                remarks = $"bili-{ckInfo.UserId}",
+                remarks = QingLongCookieRemarkFormatter.BuildAutoRemark(ckInfo.UserId, userName),
             };
             var addRe = await qingLongApi.AddEnvsAsync([add], token);
             logger.LogInformation(addRe.Code == 200 ? "新增成功！" : addRe.ToJsonStr());
@@ -305,6 +309,24 @@ public class LoginDomainService(
             await PrintIfSaveCookieFailAsync(ckInfo, cancellationToken);
             return false;
         }
+    }
+
+    private async Task<string?> TryGetUserNameAsync(BiliCookie ckInfo)
+    {
+        try
+        {
+            var response = await userInfoApi.LoginByCookie(ckInfo.ToString());
+            if (response.Code == 0 && response.Data?.IsLogin == true)
+            {
+                return response.Data.Uname;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "获取用户名用于生成青龙备注失败");
+        }
+
+        return null;
     }
 
     #region private
