@@ -41,24 +41,15 @@ public class AccountDomainService(
 
         UserInfo useInfo = apiResponse.Data;
 
-        logger.LogInformation("【用户名】{0}", useInfo.GetFuzzyUname());
-        logger.LogInformation("【会员类型】{0}", useInfo.VipType.Description());
-        logger.LogInformation("【会员状态】{0}", useInfo.VipStatus.Description());
-        logger.LogInformation("【硬币余额】{0}", useInfo.Money ?? 0);
+        logger.LogInformation("{summary}", AccountLoginLogFormatter.BuildAccountSummary(useInfo));
 
-        if (useInfo.Level_info?.Current_level < 6)
-        {
-            logger.LogInformation(
-                "【距升级Lv{0}】预计{1}天",
-                useInfo.Level_info.Current_level + 1,
-                CalculateUpgradeTime(useInfo)
-            );
-        }
-        else
-        {
-            logger.LogInformation("【当前经验】{0}", useInfo.Level_info?.Current_exp);
-            logger.LogInformation("您已是 Lv6 的大佬了，无敌是多么寂寞~");
-        }
+        int? estimatedDays =
+            useInfo.Level_info?.Current_level is > 0 and < 6 ? CalculateUpgradeTime(useInfo) : null;
+
+        logger.LogInformation(
+            "{summary}",
+            AccountLoginLogFormatter.BuildProgressSummary(useInfo, estimatedDays)
+        );
 
         return useInfo;
     }
