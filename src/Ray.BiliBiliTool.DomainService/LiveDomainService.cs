@@ -139,41 +139,41 @@ public class LiveDomainService(
         {
             logger.LogInformation("【扫描分区】{area}..." + Environment.NewLine, area.Name);
 
-            string defaultSort = "";
             //每个分区下搜索5页
             for (int i = 1; i < 6; i++)
             {
-                var request = new GetListRequest
+                var request = new GetRoomListRequest
                 {
                     platform = "web",
                     parent_area_id = area.Id,
                     area_id = 0,
-                    sort_type = defaultSort,
                     page = i,
-                    wts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 };
-                var reData = (await liveApi.GetList(request, ck.ToString())).Data;
+                var response = await liveApi.GetRoomList(request, ck.ToString());
+                if (response.Code != 0 || response.Data == null)
+                {
+                    logger.LogWarning(
+                        "【扫描分区】{area} 获取房间列表失败：{msg}",
+                        area.Name,
+                        response.Message
+                    );
+                    break;
+                }
+
+                var reData = response.Data;
 
                 foreach (var item in reData.List)
                 {
-                    if (item.Pendant_info == null || item.Pendant_info.Count == 0)
-                        continue;
-                    var suc = item.Pendant_info.TryGetValue("2", out var pendant);
-                    if (!suc)
-                        continue;
-                    if (pendant?.Pendent_id != 504)
+                    if (!LiveLotteryRoomMatcher.IsPotentialLotteryRoom(item))
                         continue;
                     count++;
 
                     await TryJoinTianXuan(item, ck);
                 }
 
-                if (reData.Has_more != 1)
+                if (reData.List.Count < 20)
                     break;
-                defaultSort = reData.New_tags.FirstOrDefault()?.Sort_type ?? "";
             }
-
-            defaultSort = "";
         }
 
         if (count == 0)
@@ -729,7 +729,7 @@ public class LiveDomainService(
                 logger.LogInformation("直播 Cookie 配置成功！");
                 return true;
             }
-            
+
             // 2. 尝试从已有Cookie中查找buvid3，生成默认LiveBuvid
             if (
                 ck.CookieItemDictionary.TryGetValue("buvid3", out string? buvid3)
@@ -742,7 +742,7 @@ public class LiveDomainService(
                 logger.LogInformation("直播 Cookie 配置成功！");
                 return true;
             }
-            
+
             // 3. 生成随机LiveBuvid
             string randomLiveBuvid = "DE" + Guid.NewGuid().ToString("N").Substring(0, 30);
             ck.CookieItemDictionary["LIVE_BUVID"] = randomLiveBuvid;

@@ -85,6 +85,17 @@ public interface ILiveApi : IBiliBiliApi
     );
 
     /// <summary>
+    /// 获取直播房间列表
+    /// </summary>
+    [Header("Referer", "https://live.bilibili.com/")]
+    [Header("Origin", "https://live.bilibili.com")]
+    [HttpGet("/room/v3/area/getRoomList")]
+    Task<BiliApiResponse<GetRoomListResponse>> GetRoomList(
+        [PathQuery] GetRoomListRequest request,
+        [Header("Cookie")] string ck
+    );
+
+    /// <summary>
     /// 检查天选时刻抽奖
     /// </summary>
     /// <param name="roomId"></param>
