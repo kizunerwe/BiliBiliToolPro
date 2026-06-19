@@ -91,14 +91,20 @@ public class DonateCoinDomainService(
 
         int success = 0;
         int tryCount = 10;
+        logger.LogInformation("{message}", DonateCoinLogFormatter.BuildSelectionPlan());
         for (int i = 1; i <= tryCount && success < needCoins; i++)
         {
             logger.LogDebug("开始尝试第{num}次", i);
 
-            var video = await TryGetCanDonatedVideo(ck);
-            if (video == null)
+            var selection = await TryGetCanDonateVideoWithSource(ck);
+            if (selection == null)
                 continue;
 
+            var video = selection.Video;
+            logger.LogInformation(
+                "{message}",
+                DonateCoinLogFormatter.BuildSourceSelected(selection.Source)
+            );
             logger.LogInformation("【视频】{title}", video.Title);
 
             bool re = await DoAddCoinForVideo(video, _dailyTaskOptions.SelectLike, ck);
@@ -123,27 +129,64 @@ public class DonateCoinDomainService(
     /// <returns></returns>
     public async Task<UpVideoInfo?> TryGetCanDonatedVideo(BiliCookie ck)
     {
+        return (await TryGetCanDonateVideoWithSource(ck))?.Video;
+    }
+
+    private async Task<DonateCoinVideoSelectionResult?> TryGetCanDonateVideoWithSource(
+        BiliCookie ck
+    )
+    {
         UpVideoInfo? result;
 
         //从配置的up中随机尝试获取1次
         result = await TryGetCanDonateVideoByConfigUps(1, ck);
         if (result != null)
-            return result;
+            return new DonateCoinVideoSelectionResult(result, DonateCoinVideoSource.ConfigUp);
+        logger.LogInformation(
+            "{message}",
+            DonateCoinLogFormatter.BuildSourceFallback(
+                DonateCoinVideoSource.ConfigUp,
+                DonateCoinVideoSource.SpecialFollowings
+            )
+        );
 
         //然后从特别关注列表尝试获取1次
         result = await TryGetCanDonateVideoBySpecialUps(1, ck);
         if (result != null)
-            return result;
+            return new DonateCoinVideoSelectionResult(
+                result,
+                DonateCoinVideoSource.SpecialFollowings
+            );
+        logger.LogInformation(
+            "{message}",
+            DonateCoinLogFormatter.BuildSourceFallback(
+                DonateCoinVideoSource.SpecialFollowings,
+                DonateCoinVideoSource.Followings
+            )
+        );
 
         //然后从普通关注列表获取1次
         result = await TryGetCanDonateVideoByFollowingUps(1, ck);
         if (result != null)
-            return result;
+            return new DonateCoinVideoSelectionResult(result, DonateCoinVideoSource.Followings);
+        logger.LogInformation(
+            "{message}",
+            DonateCoinLogFormatter.BuildSourceFallback(
+                DonateCoinVideoSource.Followings,
+                DonateCoinVideoSource.Ranking
+            )
+        );
 
         //最后从排行榜尝试5次
         result = await TryGetCanDonateVideoByRegion(5, ck);
+        if (result != null)
+            return new DonateCoinVideoSelectionResult(result, DonateCoinVideoSource.Ranking);
+        logger.LogInformation(
+            "{message}",
+            DonateCoinLogFormatter.BuildSourceFallback(DonateCoinVideoSource.Ranking)
+        );
 
-        return result;
+        return null;
     }
 
     /// <summary>
@@ -239,9 +282,23 @@ public class DonateCoinDomainService(
     {
         //是否配置了up主
         if (_dailyTaskOptions.SupportUpIdList.Count == 0)
+        {
+            logger.LogInformation(
+                "{message}",
+                DonateCoinLogFormatter.BuildSourceSkipped(
+                    DonateCoinVideoSource.ConfigUp,
+                    "未配置 SupportUpIds，跳过"
+                )
+            );
             return null;
+        }
 
-        return await TryCanDonateVideoByUps(_dailyTaskOptions.SupportUpIdList, tryCount, ck);
+        return await TryCanDonateVideoByUps(
+            _dailyTaskOptions.SupportUpIdList,
+            tryCount,
+            ck,
+            DonateCoinVideoSource.ConfigUp
+        );
         ;
     }
 
@@ -259,12 +316,22 @@ public class DonateCoinDomainService(
             ck.ToString()
         );
         if (specials.Data == null || specials.Data.Count == 0)
+        {
+            logger.LogInformation(
+                "{message}",
+                DonateCoinLogFormatter.BuildSourceSkipped(
+                    DonateCoinVideoSource.SpecialFollowings,
+                    "列表为空，跳过"
+                )
+            );
             return null;
+        }
 
         return await TryCanDonateVideoByUps(
             specials.Data.Select(x => x.Mid).ToList(),
             tryCount,
-            ck
+            ck,
+            DonateCoinVideoSource.SpecialFollowings
         );
     }
 
@@ -282,12 +349,22 @@ public class DonateCoinDomainService(
             ck.ToString()
         );
         if (result.Data.Total == 0)
+        {
+            logger.LogInformation(
+                "{message}",
+                DonateCoinLogFormatter.BuildSourceSkipped(
+                    DonateCoinVideoSource.Followings,
+                    "关注列表为空，跳过"
+                )
+            );
             return null;
+        }
 
         return await TryCanDonateVideoByUps(
             result.Data.List.Select(x => x.Mid).ToList(),
             tryCount,
-            ck
+            ck,
+            DonateCoinVideoSource.Followings
         );
     }
 
@@ -316,8 +393,10 @@ public class DonateCoinDomainService(
         }
         catch (Exception e)
         {
-            //ignore
-            logger.LogWarning("异常：{msg}", e);
+            logger.LogWarning(
+                "{message}",
+                DonateCoinLogFormatter.BuildRankingRiskWarning(e.Message)
+            );
         }
         return null;
     }
@@ -331,7 +410,8 @@ public class DonateCoinDomainService(
     private async Task<UpVideoInfo?> TryCanDonateVideoByUps(
         List<long> upIds,
         int tryCount,
-        BiliCookie ck
+        BiliCookie ck,
+        DonateCoinVideoSource source
     )
     {
         if (upIds.Count == 0)
@@ -379,8 +459,13 @@ public class DonateCoinDomainService(
         }
         catch (Exception e)
         {
-            //ignore
-            logger.LogWarning("异常：{msg}", e);
+            logger.LogWarning(
+                "{message}",
+                DonateCoinLogFormatter.BuildSourceSkipped(
+                    source,
+                    $"获取候选视频时出现异常，已跳过。{e.Message}"
+                )
+            );
         }
 
         return null;
@@ -456,4 +541,8 @@ public class DonateCoinDomainService(
     }
 
     #endregion
+    private sealed record DonateCoinVideoSelectionResult(
+        UpVideoInfo Video,
+        DonateCoinVideoSource Source
+    );
 }

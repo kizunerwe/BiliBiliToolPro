@@ -7,6 +7,8 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddDomainServices(this IServiceCollection services)
     {
+        services.AddSingleton<RankingVideoCache>();
+
         services.Scan(scan =>
             scan.FromAssemblyOf<IAccountDomainService>()
                 .AddClasses(classes => classes.AssignableTo<IDomainService>())

@@ -19,7 +19,8 @@ public class VideoDomainService(
     IOptionsMonitor<DailyTaskOptions> dailyTaskOptions,
     IRelationApi relationApi,
     IVideoApi videoApi,
-    IVideoWithoutCookieApi videoWithoutCookieApi
+    IVideoWithoutCookieApi videoWithoutCookieApi,
+    RankingVideoCache rankingVideoCache
 ) : IVideoDomainService
 {
     private readonly DailyTaskOptions _dailyTaskOptions = dailyTaskOptions.CurrentValue;
@@ -42,9 +43,19 @@ public class VideoDomainService(
     /// <returns></returns>
     public async Task<RankingInfo> GetRandomVideoOfRanking()
     {
-        var apiResponse = await videoWithoutCookieApi.GetRegionRankingVideosV2();
-        logger.LogDebug("获取排行榜成功");
-        var data = apiResponse.Data.List[new Random().Next(apiResponse.Data.List.Count)];
+        var cacheResult = await rankingVideoCache.GetOrLoadAsync(async () =>
+        {
+            var apiResponse = await videoWithoutCookieApi.GetRegionRankingVideosV2();
+            logger.LogDebug("获取排行榜成功");
+            return apiResponse.Data.List;
+        });
+
+        if (!cacheResult.IsAvailable || cacheResult.Videos == null)
+        {
+            throw new InvalidOperationException(cacheResult.ErrorMessage ?? "排行榜不可用");
+        }
+
+        var data = cacheResult.Videos[new Random().Next(cacheResult.Videos.Count)];
         return data;
     }
 
