@@ -31,6 +31,16 @@ public interface IVideoDomainService : IDomainService
     /// <returns></returns>
     Task<UpVideoInfo?> GetRandomVideoOfUp(long upId, int total, BiliCookie ck);
 
+    /// <summary>
+    /// 获取某个UP指定页的视频列表
+    /// </summary>
+    Task<IReadOnlyList<UpVideoInfo>> GetVideosOfUp(
+        long upId,
+        int pageNumber,
+        int pageSize,
+        BiliCookie ck
+    );
+
     Task<int> GetVideoCountOfUp(long upId, BiliCookie ck);
 
     /// <summary>

@@ -17,6 +17,15 @@ public static class DonateCoinLogFormatter
         return $"【选源】{GetSourceName(source)}：{reason}";
     }
 
+    public static string BuildSourceSkippedWithFallback(
+        DonateCoinVideoSource source,
+        string reason,
+        DonateCoinVideoSource nextSource
+    )
+    {
+        return $"【选源】{GetSourceName(source)}：{reason}，继续尝试{GetSourceName(nextSource)}";
+    }
+
     public static string BuildSourceFallback(
         DonateCoinVideoSource source,
         DonateCoinVideoSource? nextSource = null

@@ -55,7 +55,7 @@ public class VideoDomainService(
             throw new InvalidOperationException(cacheResult.ErrorMessage ?? "排行榜不可用");
         }
 
-        var data = cacheResult.Videos[new Random().Next(cacheResult.Videos.Count)];
+        var data = cacheResult.Videos[Random.Shared.Next(cacheResult.Videos.Count)];
         return data;
     }
 
@@ -64,24 +64,35 @@ public class VideoDomainService(
         if (total <= 0)
             return null;
 
+        return (
+            await GetVideosOfUp(upId, Random.Shared.Next(1, total + 1), 1, ck)
+        ).FirstOrDefault();
+    }
+
+    public async Task<IReadOnlyList<UpVideoInfo>> GetVideosOfUp(
+        long upId,
+        int pageNumber,
+        int pageSize,
+        BiliCookie ck
+    )
+    {
         var req = new SearchVideosByUpIdDto()
         {
             mid = upId,
-            ps = 1,
-            pn = new Random().Next(1, total + 1),
+            ps = pageSize,
+            pn = pageNumber,
         };
 
         BiliApiResponse<SearchUpVideosResponse> re = await videoApi.SearchVideosByUpId(
             req,
-            ck.ToString()
+            ck?.ToString()
         );
-
         if (re.Code != 0)
         {
             throw new Exception(re.Message);
         }
 
-        return re.Data?.List?.Vlist.FirstOrDefault();
+        return re.Data?.List?.Vlist ?? [];
     }
 
     /// <summary>
@@ -95,7 +106,7 @@ public class VideoDomainService(
 
         BiliApiResponse<SearchUpVideosResponse> re = await videoApi.SearchVideosByUpId(
             req,
-            ck.ToString()
+            ck?.ToString()
         );
         if (re.Code != 0)
         {

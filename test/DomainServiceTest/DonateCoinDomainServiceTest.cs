@@ -27,6 +27,18 @@ public class DonateCoinDomainServiceTest
     }
 
     [Fact]
+    public void BuildSourceSkippedWithFallback_ShouldDescribeReasonAndNextSource()
+    {
+        var message = DonateCoinLogFormatter.BuildSourceSkippedWithFallback(
+            DonateCoinVideoSource.ConfigUp,
+            "已看完",
+            DonateCoinVideoSource.SpecialFollowings
+        );
+
+        Assert.Equal("【选源】配置UP：已看完，继续尝试特别关注", message);
+    }
+
+    [Fact]
     public void BuildSourceSelected_ShouldUseReadableSourceName()
     {
         var message = DonateCoinLogFormatter.BuildSourceSelected(DonateCoinVideoSource.Ranking);

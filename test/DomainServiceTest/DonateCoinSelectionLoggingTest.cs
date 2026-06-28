@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
@@ -34,7 +35,11 @@ public class DonateCoinSelectionLoggingTest
             new FakeCoinDomainService(),
             new FakeVideoDomainService(),
             new FakeRelationApi(),
-            new FakeVideoApi()
+            new FakeVideoApi(),
+            new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json")
+            )
         );
         var ck = new BiliCookie(
             new Dictionary<string, string>
@@ -65,7 +70,8 @@ public class DonateCoinSelectionLoggingTest
 
     private sealed class FakeVideoDomainService : IVideoDomainService
     {
-        private readonly Queue<UpVideoInfo> _videos = new([
+        private readonly List<UpVideoInfo> _videos =
+        [
             new UpVideoInfo
             {
                 Aid = 100,
@@ -80,7 +86,7 @@ public class DonateCoinSelectionLoggingTest
                 Title = "video-101",
                 Length = "00:15",
             },
-        ]);
+        ];
 
         public Task<VideoDetail> GetVideoDetail(string aid)
         {
@@ -102,7 +108,17 @@ public class DonateCoinSelectionLoggingTest
 
         public Task<UpVideoInfo?> GetRandomVideoOfUp(long upId, int total, BiliCookie ck)
         {
-            return Task.FromResult(_videos.Count > 0 ? _videos.Dequeue() : null);
+            return Task.FromResult(_videos.FirstOrDefault());
+        }
+
+        public Task<IReadOnlyList<UpVideoInfo>> GetVideosOfUp(
+            long upId,
+            int pageNumber,
+            int pageSize,
+            BiliCookie ck
+        )
+        {
+            return Task.FromResult<IReadOnlyList<UpVideoInfo>>(_videos);
         }
 
         public Task<int> GetVideoCountOfUp(long upId, BiliCookie ck) => Task.FromResult(2);

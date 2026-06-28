@@ -60,11 +60,11 @@ public class WridEncryptionDelegatingHandler(IWbiService wbiService) : Delegatin
             return;
         }
 
-        var ckStr = request
-            .Headers.FirstOrDefault(x => x.Key == "Cookie")
-            .Value.FirstOrDefault()
-            ?.ToString();
-        var ck = CookieStrFactory<BiliCookie>.CreateNew(ckStr ?? "");
+        var cookieHeader = request.Headers.FirstOrDefault(x => x.Key == "Cookie");
+        var ckStr = cookieHeader.Value?.FirstOrDefault()?.ToString();
+        var ck = string.IsNullOrWhiteSpace(ckStr)
+            ? new BiliCookie(new Dictionary<string, string>())
+            : CookieStrFactory<BiliCookie>.CreateNew(ckStr);
 
         var wbi = await wbiService.GetWridAsync(paramsToSign, ck);
 
