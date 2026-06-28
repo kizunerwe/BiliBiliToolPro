@@ -16,4 +16,18 @@ public interface IPassportApi : IBiliBiliApi
 
     [HttpGet("/x/passport-login/web/sso/list?biliCSRF={csrf}")]
     Task<BiliApiResponse<GetSsoListResponse>> GetSsoListAsync(string csrf);
+
+    [HttpPost("/x/passport-tv-login/qrcode/auth_code")]
+    Task<BiliApiResponse<PassportTvQrCodeData>> GenerateTvQrCodeAsync(
+        [FormContent] PassportTvQrCodeAuthRequest request,
+        [Header("User-Agent")] string userAgent,
+        [Header("buvid")] string buvid
+    );
+
+    [HttpPost("/x/passport-tv-login/qrcode/poll")]
+    Task<BiliApiResponse<PassportTvPollData>> PollTvQrCodeAsync(
+        [FormContent] PassportTvQrCodePollRequest request,
+        [Header("User-Agent")] string userAgent,
+        [Header("buvid")] string buvid
+    );
 }

@@ -4,14 +4,17 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using QRCoder;
 using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.Passport;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Interfaces;
+using Ray.BiliBiliTool.Agent.BiliBiliAgent.Utils;
 using Ray.BiliBiliTool.Agent.QingLong;
 using Ray.BiliBiliTool.Agent.QingLong.Dtos;
 using Ray.BiliBiliTool.Config.Options;
+using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 using Ray.BiliBiliTool.Infrastructure.Cookie;
 
@@ -28,7 +31,8 @@ public class LoginDomainService(
     IQingLongApi qingLongApi,
     IHomeApi homeApi,
     IConfiguration configuration,
-    IOptions<QingLongOptions> qingLongOptions
+    IOptions<QingLongOptions> qingLongOptions,
+    VipBigPointAccessKeyStore vipBigPointAccessKeyStore
 ) : ILoginDomainService
 {
     public async Task<BiliCookie> LoginByQrCodeAsync(CancellationToken cancellationToken)
@@ -143,6 +147,95 @@ public class LoginDomainService(
         return biliCookie;
     }
 
+    public async Task<PassportTvLoginResult> LoginByTvQrCodeAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        string localId = PassportTvLoginRequestSigner.CreateLocalId();
+        var request = new PassportTvQrCodeAuthRequest(localId)
+        {
+            ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        };
+        request.sign = PassportTvLoginRequestSigner
+            .BuildSignedQuery(localId, request.ts)
+            .Split("&sign=")
+            .Last();
+
+        var authResponse = await passportApi.GenerateTvQrCodeAsync(
+            request,
+            PassportTvLoginRequestSigner.UserAgent,
+            localId
+        );
+        if (authResponse.Code != 0 || authResponse.Data == null)
+        {
+            throw new Exception($"获取 App 登录二维码失败：{authResponse.ToJsonStr()}");
+        }
+
+        GenerateQrCode(authResponse.Data.url);
+        logger.LogInformation(Environment.NewLine + Environment.NewLine);
+        logger.LogInformation("请使用 B 站 App 扫描上方二维码完成登录");
+        logger.LogInformation("二维码链接：{url}" + Environment.NewLine, authResponse.Data.url);
+
+        const int waitTimes = 24;
+        for (int i = 0; i < waitTimes; i++)
+        {
+            logger.LogInformation("[{num}]等待 App 扫码确认...", i + 1);
+            await Task.Delay(5 * 1000, cancellationToken);
+
+            var pollRequest = new PassportTvQrCodePollRequest(localId, authResponse.Data.auth_code)
+            {
+                ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            };
+            pollRequest.sign = PassportTvLoginRequestSigner
+                .BuildSignedQuery(
+                    localId,
+                    pollRequest.ts,
+                    $"auth_code={authResponse.Data.auth_code}"
+                )
+                .Split("&sign=")
+                .Last();
+
+            var pollResponse = await passportApi.PollTvQrCodeAsync(
+                pollRequest,
+                PassportTvLoginRequestSigner.UserAgent,
+                localId
+            );
+            if (pollResponse.Code == 0 && pollResponse.Data != null)
+            {
+                logger.LogInformation("App 二维码登录成功");
+                return PassportTvLoginResult.Create(pollResponse.Data);
+            }
+
+            if (pollResponse.Code == PassportTvPollStatus.Expired)
+            {
+                throw new Exception($"App 二维码已失效：{pollResponse.Message}");
+            }
+
+            if (PassportTvPollStatus.ShouldKeepWaiting(pollResponse.Code))
+            {
+                logger.LogInformation("App 登录状态：{msg}", pollResponse.Message);
+                continue;
+            }
+
+            throw new Exception($"App 二维码登录失败：{pollResponse.Message}");
+        }
+
+        throw new Exception("等待 App 扫码超时");
+    }
+
+    public async Task<string?> TryGetAccessKeyByTvQrCodeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await LoginByTvQrCodeAsync(cancellationToken)).AccessKey;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("补全 access_key 失败：{msg}", ex.Message);
+            return null;
+        }
+    }
+
     public async Task SaveCookieToJsonFileAsync(
         BiliCookie ckInfo,
         CancellationToken cancellationToken
@@ -226,6 +319,88 @@ public class LoginDomainService(
         lines[indexOfTargetCk] = $@"    ""{ckInfo.CookieStr}"",";
         await SaveJson(lines, fileInfo);
         logger.LogInformation("更新成功！");
+    }
+
+    public async Task SaveAccessKeyToJsonFileAsync(
+        string userId,
+        string accessKey,
+        CancellationToken cancellationToken
+    )
+    {
+        vipBigPointAccessKeyStore.Set(userId, accessKey);
+        var fileInfo = await EnsureLocalConfigFileAsync();
+        string json = await File.ReadAllTextAsync(fileInfo.PhysicalPath!, cancellationToken);
+        JObject root = string.IsNullOrWhiteSpace(json) ? new JObject() : JObject.Parse(json);
+
+        JObject vipBigPointConfig = root["VipBigPointConfig"] as JObject ?? new JObject();
+        JObject accessKeys = vipBigPointConfig["AccessKeys"] as JObject ?? new JObject();
+        accessKeys[userId] = accessKey;
+        vipBigPointConfig["AccessKeys"] = accessKeys;
+        root["VipBigPointConfig"] = vipBigPointConfig;
+
+        await File.WriteAllTextAsync(
+            fileInfo.PhysicalPath!,
+            root.ToString(Formatting.Indented),
+            cancellationToken
+        );
+        logger.LogInformation("已保存 VipBigPoint access_key 到本地 cookies.json");
+    }
+
+    public async Task SaveAccessKeyToQingLongAsync(
+        string userId,
+        string accessKey,
+        CancellationToken cancellationToken
+    )
+    {
+        vipBigPointAccessKeyStore.Set(userId, accessKey);
+        string envName = $"Ray_VipBigPointConfig__AccessKeys__{userId}";
+
+        try
+        {
+            var token = await GetQingLongAuthTokenAsync();
+            if (string.IsNullOrEmpty(token))
+            {
+                throw new Exception("获取青龙token失败");
+            }
+
+            var qlEnvList = await qingLongApi.GetEnvsAsync(envName, token);
+            if (qlEnvList.Code != 200)
+            {
+                throw new Exception($"查询环境变量失败：{qlEnvList.ToJsonStr()}");
+            }
+
+            var existingEnv = qlEnvList.Data.FirstOrDefault(x => x.name == envName);
+            if (existingEnv != null)
+            {
+                logger.LogInformation("已存在 access_key，开始更新");
+                var update = new UpdateQingLongEnv
+                {
+                    id = existingEnv.id,
+                    name = existingEnv.name,
+                    value = accessKey,
+                    remarks = existingEnv.remarks ?? $"BiliBiliToolPro App access_key ({userId})",
+                };
+
+                var updateRe = await qingLongApi.UpdateEnvsAsync(update, token);
+                logger.LogInformation(updateRe.Code == 200 ? "更新成功！" : updateRe.ToJsonStr());
+                return;
+            }
+
+            logger.LogInformation("不存在 access_key，开始新增");
+            var add = new AddQingLongEnv
+            {
+                name = envName,
+                value = accessKey,
+                remarks = $"BiliBiliToolPro App access_key ({userId})",
+            };
+
+            var addRe = await qingLongApi.AddEnvsAsync([add], token);
+            logger.LogInformation(addRe.Code == 200 ? "新增成功！" : addRe.ToJsonStr());
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("保存 access_key 到青龙失败：{msg}", ex.Message);
+        }
     }
 
     public async Task<bool> SaveCookieToQinLongAsync(
@@ -422,6 +597,29 @@ public class LoginDomainService(
 
         await using var sw = new StreamWriter(fileInfo.PhysicalPath!);
         await sw.WriteAsync(newJson);
+    }
+
+    private async Task<IFileInfo> EnsureLocalConfigFileAsync()
+    {
+        string path = hostingEnvironment.ContentRootPath;
+        var indexOfBin = path.LastIndexOf("bin");
+        if (indexOfBin != -1)
+        {
+            path = path[..indexOfBin];
+        }
+        if (string.Equals(configuration["PlatformType"], "Web", StringComparison.OrdinalIgnoreCase))
+        {
+            path = Path.Combine(path, "config");
+        }
+
+        var fileProvider = new PhysicalFileProvider(path);
+        IFileInfo fileInfo = fileProvider.GetFileInfo("cookies.json");
+        if (!fileInfo.Exists)
+        {
+            await File.WriteAllTextAsync(fileInfo.PhysicalPath!, $"{{{Environment.NewLine}}}");
+        }
+
+        return fileInfo;
     }
 
     #region qinglong

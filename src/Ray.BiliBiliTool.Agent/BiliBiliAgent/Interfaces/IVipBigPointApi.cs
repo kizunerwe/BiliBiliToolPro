@@ -11,94 +11,62 @@ namespace Ray.BiliBiliTool.Agent.BiliBiliAgent.Interfaces;
 /// 大会员大积分
 /// </summary>
 [Header("Host", "api.bilibili.com")]
-[Header("Referer", "https://big.bilibili.com/mobile/bigPoint/task")]
+[Header("Referer", "https://big.bilibili.com/mobile/bigPoint")]
 [LogFilter]
 public interface IVipBigPointApi
 {
-    /// <summary>
-    /// 获取签到信息
-    /// </summary>
-    /// <param name="request"></param>
-    /// <param name="ck"></param>
-    /// <returns></returns>
     [HttpGet("/x/vip/vip_center/sign_in/three_days_sign")]
     Task<BiliApiResponse<ThreeDaySignResponse>> GetThreeDaySignAsync(
         [PathQuery] ThreeDaySignRequest request,
         [Header("Cookie")] string ck
     );
 
-    /// <summary>
-    /// 获取任务列表
-    /// </summary>
-    /// <remarks>里面的登录信息是错误的，阿B特色</remarks>
-    /// <returns></returns>
     [Obsolete("Using IMallApi.GetCombineAsync instead.")]
     [HttpGet("/x/vip_point/task/combine")]
     Task<BiliApiResponse<VipBigPointCombine>> GetCombineAsync([Header("Cookie")] string ck);
 
-    /// <summary>
-    /// 签到任务
-    /// </summary>
-    /// <param name="request"></param>
-    /// <returns></returns>
     [Obsolete("Using IMallApi.Sign2Async instead.")]
+    [Header("Referer", "https://big.bilibili.com/mobile/bigPoint/task")]
     [HttpPost("/pgc/activity/score/task/sign")]
     Task<BiliApiResponse> SignAsync(
         [FormContent] SignRequest request,
         [Header("Cookie")] string ck
     );
 
-    /// <summary>
-    /// 领取任务
-    /// </summary>
-    /// <param name="request"></param>
-    /// <returns></returns>
     [Obsolete]
+    [Header("Referer", "https://big.bilibili.com/mobile/bigPoint/task")]
     [HttpPost("/pgc/activity/score/task/receive")]
     Task<BiliApiResponse> Receive(
         [JsonContent] ReceiveOrCompleteTaskRequest request,
         [Header("Cookie")] string ck
     );
 
-    /// <summary>
-    /// 领取任务
-    /// </summary>
-    /// <param name="request"></param>
-    /// <returns></returns>
+    [Header("app-key", "android64")]
+    [Header("env", "prod")]
+    [Header("navtive_api_from", "h5")]
+    [Header("Referer", "https://big.bilibili.com/mobile/bigPoint/task")]
     [HttpPost("/pgc/activity/score/task/receive/v2")]
     Task<BiliApiResponse> ReceiveV2(
-        [FormContent] ReceiveOrCompleteTaskRequest request,
+        [FormContent] VipBigPointTaskAppRequest request,
         [Header("Cookie")] string ck
     );
 
-    /// <summary>
-    /// 完成任务
-    /// </summary>
-    /// <param name="request"></param>
-    /// <returns></returns>
+    [Header("Referer", "https://big.bilibili.com/mobile/bigPoint/task")]
     [HttpPost("/pgc/activity/score/task/complete")]
     Task<BiliApiResponse> CompleteAsync(
         [JsonContent] ReceiveOrCompleteTaskRequest request,
         [Header("Cookie")] string ck
     );
 
-    /// <summary>
-    /// 完成任务
-    /// </summary>
-    /// <param name="request"></param>
-    /// <returns></returns>
+    [Header("app-key", "android64")]
+    [Header("env", "prod")]
+    [Header("Referer", "https://big.bilibili.com/mobile/bigPoint/task")]
     [HttpPost("/pgc/activity/score/task/complete/v2")]
     Task<BiliApiResponse> CompleteV2(
-        [FormContent] ReceiveOrCompleteTaskRequest request,
+        [FormContent] VipBigPointTaskAppRequest request,
         [Header("Cookie")] string ck
     );
 
-    /// <summary>
-    /// 完成浏览页面任务
-    /// </summary>
-    /// <param name="request"></param>
-    /// <param name="ck"></param>
-    /// <returns></returns>
     [HttpPost("/pgc/activity/deliver/task/complete")]
     Task<BiliApiResponse> ViewComplete(
         [FormContent] ViewRequest request,
@@ -108,34 +76,29 @@ public interface IVipBigPointApi
     [HttpGet("/x/vip/privilege/my")]
     Task<BiliApiResponse<VouchersInfoResponse>> GetVouchersInfoAsync([Header("Cookie")] string ck);
 
-    /// <summary>
-    /// 兑换大会员经验
-    /// </summary>
-    /// <param name="request"></param>
-    /// <returns></returns>
     [HttpPost("/x/vip/experience/add")]
     Task<BiliApiResponse> ObtainVipExperienceAsync(
         [FormContent] VipExperienceRequest request,
         [Header("Cookie")] string ck
     );
 
-    /// <summary>
-    /// 开始观看剧集任务
-    /// </summary>
-    /// <param name="request"></param>
-    /// <returns></returns>
+    [Header("app-key", "android64")]
+    [Header("env", "prod")]
+    [HttpPost("/pgc/activity/deliver/material/receive")]
     Task<BiliApiResponse<StartOgvWatchResponse>> StartOgvWatchAsync(
-        StartOgvWatchRequest request,
-        [Header("Cookie")] string ck
+        [FormContent] StartOgvWatchRequest request,
+        [Header("Cookie")] string ck,
+        [Header("buvid")] string buvid,
+        [Header("x-bili-mid")] string mid
     );
 
-    /// <summary>
-    /// 完成观看剧集任务
-    /// </summary>
-    /// <param name="request"></param>
-    /// <returns></returns>
+    [Header("app-key", "android64")]
+    [Header("env", "prod")]
+    [HttpPost("/pgc/activity/deliver/task/complete")]
     Task<BiliApiResponse> CompleteOgvWatchAsync(
-        CompleteOgvWatchRequest request,
-        [Header("Cookie")] string ck
+        [FormContent] CompleteOgvWatchRequest request,
+        [Header("Cookie")] string ck,
+        [Header("buvid")] string buvid,
+        [Header("x-bili-mid")] string mid
     );
 }

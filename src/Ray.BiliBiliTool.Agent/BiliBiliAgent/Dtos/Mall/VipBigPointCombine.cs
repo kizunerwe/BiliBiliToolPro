@@ -10,11 +10,16 @@ public class VipBigPointCombine
     public void LogFullInfo(ILogger logger)
     {
         logger.LogInformation("当前经验：{point}", point_info.point);
-        // logger.LogInformation("打卡：{signed}", Task_info.Sing_task_item.IsTodaySigned ? "√" : "X");
         foreach (var moduleItem in Task_info.Modules)
         {
+            var visibleTasks = moduleItem
+                .common_task_item.Where(x => !VipBigPointTaskCatalog.IsAutomationUnsupported(x))
+                .ToList();
+            if (visibleTasks.Count == 0)
+                continue;
+
             logger.LogInformation("-{title}", moduleItem.module_title);
-            foreach (var commonTaskItem in moduleItem.common_task_item)
+            foreach (var commonTaskItem in visibleTasks)
             {
                 logger.LogInformation(
                     "---{title}：{status}",

@@ -8,6 +8,7 @@ public static class TaskTypeFactory
 {
     private static readonly List<Type> TypeList =
     [
+        typeof(IAccessKeyTaskAppService),
         typeof(ILoginTaskAppService),
         typeof(ITestAppService),
         typeof(IDailyTaskAppService),

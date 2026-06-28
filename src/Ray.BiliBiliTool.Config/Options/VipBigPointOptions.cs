@@ -4,6 +4,10 @@ public class VipBigPointOptions : BaseConfigOptions
 {
     public override string SectionName => "VipBigPointConfig";
 
+    public string? AccessKey { get; set; }
+
+    public Dictionary<string, string> AccessKeys { get; set; } = [];
+
     public string? ViewBangumis { get; set; }
 
     public List<long> ViewBangumiList
@@ -31,6 +35,7 @@ public class VipBigPointOptions : BaseConfigOptions
         return MergeConfigDictionary(
             new Dictionary<string, string>
             {
+                { $"{SectionName}:{nameof(AccessKey)}", AccessKey ?? "" },
                 { $"{SectionName}:{nameof(ViewBangumis)}", ViewBangumis ?? "" },
             }
         );

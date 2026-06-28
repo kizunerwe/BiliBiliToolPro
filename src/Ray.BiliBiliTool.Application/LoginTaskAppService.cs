@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Application.Attributes;
 using Ray.BiliBiliTool.Application.Contracts;
+using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 using Ray.BiliBiliTool.Infrastructure.Enums;
 
@@ -17,23 +18,23 @@ public class LoginTaskAppService(
     [TaskInterceptor("扫码登录", TaskLevel.One)]
     public override async Task DoTaskAsync(CancellationToken cancellationToken = default)
     {
-        //扫码登录
-        var cookieInfo = await QrCodeLoginAsync(cancellationToken);
-        if (cookieInfo == null)
-            return;
+        var loginResult = await QrCodeLoginAsync(cancellationToken);
+        var cookieInfo = loginResult.Cookie;
 
         //set cookie
         cookieInfo = await SetCookiesAsync(cookieInfo, cancellationToken);
 
         //持久化cookie
         await SaveCookieAsync(cookieInfo, cancellationToken);
+
+        //持久化 access_key
+        await SaveAccessKeyAsync(cookieInfo.UserId, loginResult.AccessKey, cancellationToken);
     }
 
     [TaskInterceptor("获取二维码")]
-    private async Task<BiliCookie> QrCodeLoginAsync(CancellationToken cancellationToken)
+    private async Task<PassportTvLoginResult> QrCodeLoginAsync(CancellationToken cancellationToken)
     {
-        var biliCookie = await loginDomainService.LoginByQrCodeAsync(cancellationToken);
-        return biliCookie;
+        return await loginDomainService.LoginByTvQrCodeAsync(cancellationToken);
     }
 
     [TaskInterceptor("Set Cookie")]
@@ -61,5 +62,32 @@ public class LoginTaskAppService(
 
         //更新cookie到json
         await loginDomainService.SaveCookieToJsonFileAsync(ckInfo, cancellationToken);
+    }
+
+    [TaskInterceptor("持久化 access_key", rethrowWhenException: false)]
+    private async Task SaveAccessKeyAsync(
+        string userId,
+        string accessKey,
+        CancellationToken cancellationToken
+    )
+    {
+        if (string.IsNullOrWhiteSpace(accessKey))
+        {
+            logger.LogWarning("本次登录未返回 access_key");
+            return;
+        }
+
+        var platformType = configuration.GetSection("PlatformType").Get<PlatformType>();
+        if (platformType == PlatformType.QingLong)
+        {
+            await loginDomainService.SaveAccessKeyToQingLongAsync(
+                userId,
+                accessKey,
+                cancellationToken
+            );
+            return;
+        }
+
+        await loginDomainService.SaveAccessKeyToJsonFileAsync(userId, accessKey, cancellationToken);
     }
 }

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
@@ -7,6 +7,7 @@ using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.ViewMall;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.VipTask;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.VipTask.ThreeDaysSign;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Interfaces;
+using Ray.BiliBiliTool.Agent.BiliBiliAgent.Utils;
 using Ray.BiliBiliTool.Config.Options;
 using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
@@ -21,11 +22,10 @@ public class VipBigPointDomainService(
     IVipMallApi vipMallApi,
     IVideoApi videoApi,
     IAccountDomainService accountDomainService,
-    IVideoDomainService videoDomainService
+    IVideoDomainService videoDomainService,
+    VipBigPointAccessKeyStore vipBigPointAccessKeyStore
 ) : IVipBigPointDomainService
 {
-    private readonly VipBigPointOptions _vipBigPointOptions = vipBigPointOptions.CurrentValue;
-
     public async Task<VipBigPointCombine> GetCombineAsync(BiliCookie ck)
     {
         var allTasks = await mallApi.GetCombineAsync(
@@ -37,9 +37,6 @@ public class VipBigPointDomainService(
         return allTasks.Data;
     }
 
-    /// <summary>
-    /// 领取大会员专属等级加速包
-    /// </summary>
     public async Task VipExpressAsync(BiliCookie ck)
     {
         var re = await vipApi.GetVouchersInfoAsync(ck.ToString());
@@ -52,10 +49,8 @@ public class VipBigPointDomainService(
                 case 2:
                     logger.LogInformation("大会员经验观看任务未完成");
                     logger.LogInformation("开始观看视频");
-                    // 观看视频，暂时没有好办法解决，先这样使着
                     DailyTaskInfo dailyTaskInfo = await accountDomainService.GetDailyTaskStatus(ck);
                     await videoDomainService.WatchAndShareVideo(dailyTaskInfo, ck);
-                    // 跳转到未兑换，执行兑换任务
                     goto case 0;
 
                 case 1:
@@ -64,7 +59,6 @@ public class VipBigPointDomainService(
 
                 case 0:
                     logger.LogInformation("大会员经验未兑换");
-                    //兑换api
                     var response = await vipApi.ObtainVipExperienceAsync(
                         new VipExperienceRequest { csrf = ck.BiliJct },
                         ck.ToString()
@@ -90,11 +84,6 @@ public class VipBigPointDomainService(
         }
     }
 
-    /// <summary>
-    /// 签到
-    /// </summary>
-    /// <param name="ck"></param>
-    /// <exception cref="Exception"></exception>
     public async Task SignAsync(BiliCookie ck)
     {
         var signInfo = await vipApi.GetThreeDaySignAsync(
@@ -126,20 +115,24 @@ public class VipBigPointDomainService(
         signInfo.Data.LogPointInfo(logger);
     }
 
-    /// <summary>
-    /// 领取任务
-    /// </summary>
-    /// <param name="combine"></param>
-    /// <param name="ck"></param>
     public async Task ReceiveDailyMissionsAsync(VipBigPointCombine combine, BiliCookie ck)
     {
         const string moduleCode = "日常任务";
 
         var module = combine.Task_info.Modules.FirstOrDefault(x => x.module_title == moduleCode);
-        var missionsNeedReceive = module?.common_task_item.Where(x => x.state == 0).ToList();
+        var missionsNeedReceive = module
+            ?.common_task_item.Where(x =>
+                x.state == 0 && !VipBigPointTaskCatalog.IsAutomationUnsupported(x)
+            )
+            .ToList();
         if (missionsNeedReceive == null || missionsNeedReceive.Count == 0)
         {
             logger.LogInformation("均已领取，跳过");
+            return;
+        }
+
+        if (!HasAccessKey(ck, "领取日常任务"))
+        {
             return;
         }
 
@@ -182,7 +175,6 @@ public class VipBigPointDomainService(
         logger.LogInformation("开始完成任务");
         var re = await completeFunc(taskCode, ck);
 
-        //确认
         if (re)
         {
             var combine = await GetCombineAsync(ck);
@@ -247,7 +239,15 @@ public class VipBigPointDomainService(
 
     public async Task<bool> CompleteV2Async(string taskCode, BiliCookie ck)
     {
-        var request = new ReceiveOrCompleteTaskRequest(taskCode);
+        string? accessKey = RequireAccessKey(ck, $"完成任务 {taskCode}");
+        if (accessKey == null)
+        {
+            return false;
+        }
+
+        var request = new VipBigPointTaskAppRequest(taskCode, ck.BiliJct);
+        VipBigPointAppRequestSigner.PopulateAppSign(request, accessKey);
+
         var re = await vipApi.CompleteV2(request, ck.ToString());
         if (re.Code == 0)
         {
@@ -259,17 +259,97 @@ public class VipBigPointDomainService(
         return false;
     }
 
+    public async Task<bool> CompleteOgvWatchAsync(BiliCookie ck)
+    {
+        string? accessKey = RequireAccessKey(ck, "观看剧集内容");
+        if (accessKey == null)
+        {
+            return false;
+        }
+
+        var bangumiEpisode = await GetBangumiEpisodeAsync(ck);
+        if (bangumiEpisode == null)
+        {
+            logger.LogInformation("未找到可用的剧集，跳过");
+            return false;
+        }
+
+        var startRequest = new StartOgvWatchRequest(
+            bangumiEpisode.Value.EpisodeId,
+            bangumiEpisode.Value.SeasonId,
+            ck.BiliJct
+        );
+        VipBigPointAppRequestSigner.PopulateAppSign(startRequest, accessKey);
+
+        var startResponse = await vipApi.StartOgvWatchAsync(
+            startRequest,
+            ck.ToString(),
+            ck.Buvid,
+            ck.UserId
+        );
+        if (startResponse.Code != 0 || startResponse.Data == null)
+        {
+            logger.LogInformation("开始观看失败：{msg}", startResponse.ToJsonStr());
+            return false;
+        }
+        if (!startResponse.Data.HasValidTaskContext)
+        {
+            logger.LogInformation(
+                "开始观看返回缺少有效 task_id/token：{msg}",
+                startResponse.ToJsonStr()
+            );
+            return false;
+        }
+        if (startResponse.Data.CountdownMilliseconds > 0)
+        {
+            var delay = TimeSpan.FromMilliseconds(startResponse.Data.CountdownMilliseconds + 5000);
+            logger.LogInformation("等待剧集观看倒计时：{seconds} 秒", (int)delay.TotalSeconds);
+            await DelayAsync(delay);
+        }
+
+        var completeRequest = new CompleteOgvWatchRequest(
+            startResponse.Data.task_id,
+            startResponse.Data.token!,
+            ck.BiliJct
+        )
+        {
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        };
+        VipBigPointAppRequestSigner.PopulateOgvTaskSigns(completeRequest);
+        VipBigPointAppRequestSigner.PopulateAppSign(completeRequest, accessKey);
+
+        var completeResponse = await vipApi.CompleteOgvWatchAsync(
+            completeRequest,
+            ck.ToString(),
+            ck.Buvid,
+            ck.UserId
+        );
+        if (completeResponse.Code == 0)
+        {
+            logger.LogInformation("已完成");
+            return true;
+        }
+
+        logger.LogInformation("失败：{msg}", completeResponse.ToJsonStr());
+        return false;
+    }
+
     #region private
 
-    /// <summary>
-    /// 领取任务
-    /// </summary>
     private async Task TryReceive(string taskCode, BiliCookie ck)
     {
+        string? accessKey = RequireAccessKey(ck, $"领取任务 {taskCode}");
+        if (accessKey == null)
+        {
+            return;
+        }
+
         BiliApiResponse? re = null;
         try
         {
-            var request = new ReceiveOrCompleteTaskRequest(taskCode);
+            var request = new VipBigPointTaskAppRequest(taskCode, ck.BiliJct);
+            VipBigPointAppRequestSigner.PopulateAppSign(request, accessKey);
+
             re = await vipApi.ReceiveV2(request, ck.ToString());
             if (re.Code == 0)
                 logger.LogInformation("领取任务成功");
@@ -283,56 +363,25 @@ public class VipBigPointDomainService(
         }
     }
 
-    private async Task<bool> WatchBangumi(BiliCookie ck)
+    private async Task<(long SeasonId, long EpisodeId)?> GetBangumiEpisodeAsync(BiliCookie ck)
     {
-        if (_vipBigPointOptions.ViewBangumiList.Count == 0)
-            return false;
+        var options = vipBigPointOptions.CurrentValue;
+        if (options.ViewBangumiList.Count == 0)
+            return null;
 
-        long randomSsid = _vipBigPointOptions.ViewBangumiList[
-            new Random().Next(0, _vipBigPointOptions.ViewBangumiList.Count)
+        long randomSsid = options.ViewBangumiList[
+            new Random().Next(0, options.ViewBangumiList.Count)
         ];
 
         var res = await GetBangumi(randomSsid, ck);
         if (res is null)
         {
-            return false;
+            return null;
         }
 
-        var videoInfo = res.Value.Item1;
-
-        // 随机播放时间
-        int playedTime = new Random().Next(905, 1800);
-        // 观看该视频
-        var request = new UploadVideoHeartbeatRequest()
-        {
-            Aid = long.Parse(videoInfo.Aid),
-            Bvid = videoInfo.Bvid,
-            Cid = videoInfo.Cid,
-            Mid = long.Parse(ck.UserId),
-            Sid = randomSsid,
-            Epid = res.Value.Item2,
-            Csrf = ck.BiliJct,
-            Type = 4,
-            Sub_type = 1,
-            Start_ts = DateTime.Now.ToTimeStamp() - playedTime,
-            Played_time = playedTime,
-            Realtime = playedTime,
-            Real_played_time = playedTime,
-        };
-        BiliApiResponse apiResponse = await videoApi.UploadVideoHeartbeat(request, ck.ToString());
-        if (apiResponse.Code == 0)
-        {
-            return true;
-        }
-
-        return false;
+        return (randomSsid, res.Value.Item2);
     }
 
-    /// <summary>
-    /// 从自定义的番剧ssid中选择其中的一部中的一集
-    /// </summary>
-    /// <param name="randomSsid">番剧ssid</param>
-    /// <returns></returns>
     private async Task<(VideoInfoDto, long)?> GetBangumi(long randomSsid, BiliCookie ck)
     {
         try
@@ -340,12 +389,16 @@ public class VipBigPointDomainService(
             if (randomSsid is 0 or long.MinValue)
                 return null;
             var bangumiInfo = await videoApi.GetBangumiBySsid(randomSsid, ck.ToString());
+            var availableEpisodes = bangumiInfo
+                .Result.episodes.Where(x => x.status == 2 && x.ep_id > 0 && x.cid > 0)
+                .ToList();
+            if (availableEpisodes.Count == 0)
+            {
+                logger.LogWarning("番剧 ssid={ssid} 未返回可用正片，跳过", randomSsid);
+                return null;
+            }
 
-            // 从获取的剧集中随机获得其中的一集
-
-            var bangumi = bangumiInfo.Result.episodes[
-                new Random().Next(0, bangumiInfo.Result.episodes.Count)
-            ];
+            var bangumi = availableEpisodes[new Random().Next(0, availableEpisodes.Count)];
             var videoInfo = new VideoInfoDto()
             {
                 Bvid = bangumi.bvid,
@@ -364,6 +417,53 @@ public class VipBigPointDomainService(
         }
 
         return null;
+    }
+
+    private string? ResolveAccessKey(BiliCookie ck)
+    {
+        string? runtimeAccessKey = NormalizeAccessKey(vipBigPointAccessKeyStore.Get(ck.UserId));
+        if (runtimeAccessKey != null)
+        {
+            return runtimeAccessKey;
+        }
+
+        var options = vipBigPointOptions.CurrentValue;
+        if (options.AccessKeys.TryGetValue(ck.UserId, out var accountAccessKey))
+        {
+            string? normalizedAccountAccessKey = NormalizeAccessKey(accountAccessKey);
+            if (normalizedAccountAccessKey != null)
+            {
+                return normalizedAccountAccessKey;
+            }
+        }
+
+        return NormalizeAccessKey(options.AccessKey);
+    }
+
+    private bool HasAccessKey(BiliCookie ck, string actionName)
+    {
+        return RequireAccessKey(ck, actionName) != null;
+    }
+
+    private string? RequireAccessKey(BiliCookie ck, string actionName)
+    {
+        string? accessKey = ResolveAccessKey(ck);
+        if (accessKey == null)
+        {
+            logger.LogWarning("{action}缺少 access_key，跳过", actionName);
+        }
+
+        return accessKey;
+    }
+
+    private static string? NormalizeAccessKey(string? accessKey)
+    {
+        return string.IsNullOrWhiteSpace(accessKey) ? null : accessKey.Trim();
+    }
+
+    protected virtual Task DelayAsync(TimeSpan delay)
+    {
+        return Task.Delay(delay);
     }
 
     #endregion
