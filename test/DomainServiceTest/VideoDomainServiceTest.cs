@@ -11,6 +11,7 @@ namespace DomainServiceTest
         }
 
         [Fact]
+        [Trait("Category", "External")]
         public async Task GetVideoCountOfUp_Test()
         {
             using var scope = Global.ServiceProviderRoot.CreateScope();
@@ -21,6 +22,7 @@ namespace DomainServiceTest
         }
 
         [Fact]
+        [Trait("Category", "External")]
         public async Task GetRandomVideoOfUp_Test()
         {
             using var scope = Global.ServiceProviderRoot.CreateScope();

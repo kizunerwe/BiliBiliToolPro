@@ -1,0 +1,53 @@
+name: QingLong Verify
+
+on:
+  push:
+    paths:
+      - "qinglong/**"
+      - "scripts/test-qinglong-base.sh"
+      - "src/Ray.BiliBiliTool.Console/**"
+      - "src/Ray.BiliBiliTool.Application/**"
+      - "src/Ray.BiliBiliTool.Application.Contracts/**"
+      - "src/Ray.BiliBiliTool.DomainService/**"
+      - "src/Ray.BiliBiliTool.Agent/**"
+      - "src/Ray.BiliBiliTool.Config/**"
+      - "src/Ray.BiliBiliTool.Infrastructure/**"
+      - "test/DomainServiceTest/**"
+      - "test/InfrastructureTest/**"
+      - ".github/workflows/qinglong-verify.yml"
+  pull_request:
+    paths:
+      - "qinglong/**"
+      - "scripts/test-qinglong-base.sh"
+      - "src/Ray.BiliBiliTool.Console/**"
+      - "src/Ray.BiliBiliTool.Application/**"
+      - "src/Ray.BiliBiliTool.Application.Contracts/**"
+      - "src/Ray.BiliBiliTool.DomainService/**"
+      - "src/Ray.BiliBiliTool.Agent/**"
+      - "src/Ray.BiliBiliTool.Config/**"
+      - "src/Ray.BiliBiliTool.Infrastructure/**"
+      - "test/DomainServiceTest/**"
+      - "test/InfrastructureTest/**"
+      - ".github/workflows/qinglong-verify.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore Console
+        run: dotnet restore src/Ray.BiliBiliTool.Console/Ray.BiliBiliTool.Console.csproj
+      - name: Build Console
+        run: dotnet build src/Ray.BiliBiliTool.Console/Ray.BiliBiliTool.Console.csproj -c Release --no-restore
+      - name: Stable domain tests
+        run: dotnet test test/DomainServiceTest/DomainServiceTest.csproj -c Release --filter "Category!=External"
+      - name: Infrastructure tests
+        run: dotnet test test/InfrastructureTest/InfrastructureTest.csproj -c Release
+      - name: QingLong shell checks
+        run: bash scripts/test-qinglong-base.sh
