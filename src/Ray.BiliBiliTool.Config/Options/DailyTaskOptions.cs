@@ -1,4 +1,4 @@
-﻿namespace Ray.BiliBiliTool.Config.Options;
+namespace Ray.BiliBiliTool.Config.Options;
 
 /// <summary>
 /// 程序自定义个性化配置
@@ -11,6 +11,15 @@ public class DailyTaskOptions : BaseConfigOptions
     /// 是否观看视频
     /// </summary>
     public bool IsWatchVideo { get; set; }
+
+    public bool IsUpFriendlyMode { get; set; } = false;
+
+    private int _upFriendlyWatchSeconds = 60;
+    public int UpFriendlyWatchSeconds
+    {
+        get => _upFriendlyWatchSeconds;
+        set => _upFriendlyWatchSeconds = value > 0 ? value : 60;
+    }
 
     /// <summary>
     /// 是否分享视频
@@ -41,6 +50,16 @@ public class DailyTaskOptions : BaseConfigOptions
     /// 投币时是否点赞[false,true]
     /// </summary>
     public bool SelectLike { get; set; } = false;
+
+    /// <summary>
+    /// UP友好模式下是否收藏视频
+    /// </summary>
+    public bool SelectFavorite { get; set; } = false;
+
+    /// <summary>
+    /// UP友好模式专用收藏夹名称
+    /// </summary>
+    public string FavoriteFolderName { get; set; } = "BiliBiliToolPro-UP支持";
 
     /// <summary>
     /// 优先选择支持的up主Id集合，配置后会优先从指定的up主下挑选视频进行观看、分享和投币，不配置则从排行耪随机获取支持视频
@@ -98,6 +117,14 @@ public class DailyTaskOptions : BaseConfigOptions
             new Dictionary<string, string>
             {
                 { $"{SectionName}:{nameof(IsWatchVideo)}", IsWatchVideo.ToString().ToLower() },
+                {
+                    $"{SectionName}:{nameof(IsUpFriendlyMode)}",
+                    IsUpFriendlyMode.ToString().ToLower()
+                },
+                {
+                    $"{SectionName}:{nameof(UpFriendlyWatchSeconds)}",
+                    UpFriendlyWatchSeconds.ToString()
+                },
                 { $"{SectionName}:{nameof(IsShareVideo)}", IsShareVideo.ToString().ToLower() },
                 {
                     $"{SectionName}:{nameof(IsDonateCoinForArticle)}",
@@ -113,6 +140,8 @@ public class DailyTaskOptions : BaseConfigOptions
                     SaveCoinsWhenLv6.ToString().ToLower()
                 },
                 { $"{SectionName}:{nameof(SelectLike)}", SelectLike.ToString().ToLower() },
+                { $"{SectionName}:{nameof(SelectFavorite)}", SelectFavorite.ToString().ToLower() },
+                { $"{SectionName}:{nameof(FavoriteFolderName)}", FavoriteFolderName },
                 { $"{SectionName}:{nameof(SupportUpIds)}", SupportUpIds ?? "" },
                 { $"{SectionName}:{nameof(DevicePlatform)}", DevicePlatform },
             }

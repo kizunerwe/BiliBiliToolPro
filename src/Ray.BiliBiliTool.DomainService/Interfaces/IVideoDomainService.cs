@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.DomainService.Dtos;
@@ -16,6 +16,12 @@ public interface IVideoDomainService : IDomainService
     /// <param name="aid"></param>
     /// <returns></returns>
     Task<VideoDetail> GetVideoDetail(string aid);
+
+    Task<bool> WatchVideoForUpFriendlyMode(
+        VideoDetail video,
+        BiliCookie ck,
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// 从排行榜获取一个随机视频

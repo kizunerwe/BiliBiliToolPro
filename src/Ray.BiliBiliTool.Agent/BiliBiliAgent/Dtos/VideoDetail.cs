@@ -1,10 +1,12 @@
-﻿namespace Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
+namespace Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 
 public class VideoDetail
 {
     public required string Bvid { get; set; }
 
     public long Aid { get; set; }
+
+    public long Cid { get; set; }
 
     /// <summary>
     /// 稿件分P总数

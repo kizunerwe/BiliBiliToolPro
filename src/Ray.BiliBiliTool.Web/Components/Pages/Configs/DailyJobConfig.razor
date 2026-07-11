@@ -76,6 +76,23 @@
                                 <MudSwitch T="bool" @bind-Value="_config.SelectLike"
                                     Label="投币时点赞" Color="Color.Primary" Class="mt-3" />
 
+                                <MudSwitch T="bool" @bind-Value="_config.IsUpFriendlyMode"
+                                    Label="启用 UP 友好模式" Color="Color.Primary" Class="mt-3" />
+
+                                <MudNumericField T="int" @bind-Value="_config.UpFriendlyWatchSeconds"
+                                    Label="长视频观看秒数" Min="1" Class="mt-3"
+                                    Disabled="!_config.IsUpFriendlyMode"
+                                    HelperText="投币前先观看对应视频；短视频默认看完，长视频按此时长观看" />
+
+                                <MudSwitch T="bool" @bind-Value="_config.SelectFavorite"
+                                    Label="投币前收藏视频" Color="Color.Primary" Class="mt-3"
+                                    Disabled="!_config.IsUpFriendlyMode" />
+
+                                <MudTextField T="string" @bind-Value="_config.FavoriteFolderName"
+                                    Label="专用收藏夹名称" Class="mt-3"
+                                    Disabled="!_config.IsUpFriendlyMode || !_config.SelectFavorite"
+                                    HelperText="自动收藏集中放入独立收藏夹，不与账号原有收藏混用" />
+
                                 <MudTextField T="string" @bind-Value="_config.SupportUpIds" Label="支持的up主Id集合（用逗号分隔）"
                                     HelperText="配置后会优先从指定的up主下挑选视频进行观看、分享和投币" Class="mt-3" />
 

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
@@ -20,7 +20,8 @@ public class VideoDomainService(
     IRelationApi relationApi,
     IVideoApi videoApi,
     IVideoWithoutCookieApi videoWithoutCookieApi,
-    RankingVideoCache rankingVideoCache
+    RankingVideoCache rankingVideoCache,
+    ITaskDelay taskDelay
 ) : IVideoDomainService
 {
     private readonly DailyTaskOptions _dailyTaskOptions = dailyTaskOptions.CurrentValue;
@@ -35,6 +36,71 @@ public class VideoDomainService(
     {
         var re = await videoWithoutCookieApi.GetVideoDetail(aid);
         return re.Data!;
+    }
+
+    public async Task<bool> WatchVideoForUpFriendlyMode(
+        VideoDetail video,
+        BiliCookie ck,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            int plannedSeconds = (int)
+                Math.Min(video.Duration, _dailyTaskOptions.UpFriendlyWatchSeconds);
+            long startTs = DateTime.Now.ToTimeStamp();
+            int progress = 0;
+            if (!await UploadUpFriendlyHeartbeat(video, ck, startTs, progress, 1))
+                return false;
+            while (progress < plannedSeconds)
+            {
+                int segmentSeconds = Math.Min(15, plannedSeconds - progress);
+                await taskDelay.Delay(TimeSpan.FromSeconds(segmentSeconds), cancellationToken);
+                progress += segmentSeconds;
+                if (!await UploadUpFriendlyHeartbeat(video, ck, startTs, progress, 0))
+                    return false;
+            }
+            return await UploadUpFriendlyHeartbeat(video, ck, startTs, progress, 2);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "UP友好播放异常：{message}", ex.Message);
+            return false;
+        }
+    }
+
+    private async Task<bool> UploadUpFriendlyHeartbeat(
+        VideoDetail video,
+        BiliCookie ck,
+        long startTs,
+        int progress,
+        int playType
+    )
+    {
+        var response = await videoApi.UploadVideoHeartbeat(
+            new UploadVideoHeartbeatRequest
+            {
+                Aid = video.Aid,
+                Bvid = video.Bvid,
+                Cid = video.Cid,
+                Mid = long.Parse(ck.UserId),
+                Csrf = ck.BiliJct,
+                Played_time = progress,
+                Realtime = progress,
+                Real_played_time = progress,
+                Start_ts = startTs,
+                Play_type = playType,
+            },
+            ck.ToString()
+        );
+        if (response.Code == 0)
+            return true;
+        logger.LogError("UP友好播放心跳失败，原因：{message}", response.Message);
+        return false;
     }
 
     /// <summary>

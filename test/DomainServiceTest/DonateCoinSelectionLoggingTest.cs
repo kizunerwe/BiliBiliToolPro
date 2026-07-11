@@ -34,6 +34,7 @@ public class DonateCoinSelectionLoggingTest
             new FakeAccountApi(),
             new FakeCoinDomainService(),
             new FakeVideoDomainService(),
+            new FakeFavoriteDomainService(),
             new FakeRelationApi(),
             new FakeVideoApi(),
             new DonateCoinSelectionStateStore(
@@ -59,6 +60,24 @@ public class DonateCoinSelectionLoggingTest
                 x.Contains("【选视频】按顺序尝试：配置UP -> 特别关注 -> 普通关注 -> 排行榜")
             )
         );
+    }
+
+    private sealed class FakeFavoriteDomainService : IFavoriteDomainService
+    {
+        public Task<long?> GetOrCreateFolderAsync(
+            string folderName,
+            BiliCookie cookie,
+            long aid = 0
+        ) => Task.FromResult<long?>(1);
+
+        public Task<bool> AddVideoAsync(
+            long aid,
+            long folderId,
+            string fromSpmid,
+            string spmid,
+            string statistics,
+            BiliCookie cookie
+        ) => Task.FromResult(true);
     }
 
     private sealed class FakeCoinDomainService : ICoinDomainService
@@ -122,6 +141,12 @@ public class DonateCoinSelectionLoggingTest
         }
 
         public Task<int> GetVideoCountOfUp(long upId, BiliCookie ck) => Task.FromResult(2);
+
+        public Task<bool> WatchVideoForUpFriendlyMode(
+            VideoDetail video,
+            BiliCookie ck,
+            CancellationToken cancellationToken
+        ) => Task.FromResult(true);
 
         public Task WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck)
         {

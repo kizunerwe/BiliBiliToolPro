@@ -177,6 +177,41 @@ public sealed class DonateCoinSelectionBehaviorTest
         }
     }
 
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldSkipCoinWhenUpFriendlyWatchFails()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var videoDomainService = new FakeVideoDomainService { WatchResult = false };
+            videoDomainService.SetConfigUpVideos(1, [CreateVideo(10, "video-10")]);
+            var videoApi = new FakeVideoApi();
+            var service = CreateDomainService(
+                new ListLogger<DonateCoinDomainService>(),
+                new DonateCoinSelectionStateStore(
+                    NullLogger<DonateCoinSelectionStateStore>.Instance,
+                    Path.Combine(tempDirectory, "state.json")
+                ),
+                videoDomainService,
+                new FakeRelationApi(),
+                videoApi,
+                "1",
+                1,
+                true
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Empty(videoApi.AddedCoinAids);
+            Assert.Contains(10, videoDomainService.WatchedAids);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, true);
+        }
+    }
+
     private static DonateCoinDomainService CreateDomainService(
         ILogger<DonateCoinDomainService> logger,
         DonateCoinSelectionStateStore stateStore,
@@ -184,7 +219,8 @@ public sealed class DonateCoinSelectionBehaviorTest
         FakeRelationApi relationApi,
         FakeVideoApi videoApi,
         string supportUpIds,
-        int numberOfCoins
+        int numberOfCoins,
+        bool isUpFriendlyMode = false
     )
     {
         var options = new TestOptionsMonitor<DailyTaskOptions>(
@@ -194,6 +230,7 @@ public sealed class DonateCoinSelectionBehaviorTest
                 NumberOfProtectedCoins = 0,
                 SelectLike = false,
                 SupportUpIds = supportUpIds,
+                IsUpFriendlyMode = isUpFriendlyMode,
             }
         );
 
@@ -203,6 +240,7 @@ public sealed class DonateCoinSelectionBehaviorTest
             new FakeAccountApi(),
             new FakeCoinDomainService(),
             videoDomainService,
+            new FakeFavoriteDomainService(),
             relationApi,
             videoApi,
             stateStore
@@ -233,6 +271,32 @@ public sealed class DonateCoinSelectionBehaviorTest
         };
     }
 
+    private sealed class FakeFavoriteDomainService : IFavoriteDomainService
+    {
+        public long? FolderId { get; set; } = 1;
+        public bool AddResult { get; set; } = true;
+        public List<long> AddedAids { get; } = [];
+
+        public Task<long?> GetOrCreateFolderAsync(
+            string folderName,
+            BiliCookie cookie,
+            long aid = 0
+        ) => Task.FromResult(FolderId);
+
+        public Task<bool> AddVideoAsync(
+            long aid,
+            long folderId,
+            string fromSpmid,
+            string spmid,
+            string statistics,
+            BiliCookie cookie
+        )
+        {
+            AddedAids.Add(aid);
+            return Task.FromResult(AddResult);
+        }
+    }
+
     private sealed class FakeCoinDomainService : ICoinDomainService
     {
         public Task<decimal> GetCoinBalance(BiliCookie ck) => Task.FromResult(10m);
@@ -246,6 +310,8 @@ public sealed class DonateCoinSelectionBehaviorTest
         private readonly Dictionary<long, Queue<UpVideoInfo>> _randomVideos = [];
 
         public Exception? RankingException { get; set; }
+        public bool WatchResult { get; set; } = true;
+        public List<long> WatchedAids { get; } = [];
 
         public void SetConfigUpVideos(long upId, List<UpVideoInfo> videos)
         {
@@ -328,6 +394,16 @@ public sealed class DonateCoinSelectionBehaviorTest
             }
 
             return Task.FromResult(0);
+        }
+
+        public Task<bool> WatchVideoForUpFriendlyMode(
+            VideoDetail video,
+            BiliCookie ck,
+            CancellationToken cancellationToken
+        )
+        {
+            WatchedAids.Add(video.Aid);
+            return Task.FromResult(WatchResult);
         }
 
         public Task WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck)
@@ -437,6 +513,7 @@ public sealed class DonateCoinSelectionBehaviorTest
     private sealed class FakeVideoApi : IVideoApi
     {
         private readonly Dictionary<long, int> _donatedCoins = [];
+        public List<long> AddedCoinAids { get; } = [];
 
         public void SetDonatedCoins(long aid, int multiply)
         {
@@ -463,6 +540,7 @@ public sealed class DonateCoinSelectionBehaviorTest
                 "https://www.bilibili.com/video/BV123456/?spm_id_from=333.1007.tianma.1-1-1.click&vd_source=80c1601a7003934e7a90709c18dfcffd"
         )
         {
+            AddedCoinAids.Add(request.Aid);
             return Task.FromResult(new BiliApiResponse { Code = 0, Message = "0" });
         }
 

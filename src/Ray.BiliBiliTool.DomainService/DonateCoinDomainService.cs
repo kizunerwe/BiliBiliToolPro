@@ -18,6 +18,7 @@ public class DonateCoinDomainService(
     IAccountApi accountApi,
     ICoinDomainService coinDomainService,
     IVideoDomainService videoDomainService,
+    IFavoriteDomainService favoriteDomainService,
     IRelationApi relationApi,
     IVideoApi videoApi,
     DonateCoinSelectionStateStore selectionStateStore
@@ -110,6 +111,62 @@ public class DonateCoinDomainService(
                 DonateCoinLogFormatter.BuildSourceSelected(selection.Source)
             );
             logger.LogInformation("【视频】{title}", video.Title);
+
+            if (_dailyTaskOptions.IsUpFriendlyMode)
+            {
+                VideoDetail detail;
+                try
+                {
+                    detail = await videoDomainService.GetVideoDetail(video.Aid.ToString());
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "获取视频详情失败，跳过当前候选：{message}", ex.Message);
+                    continue;
+                }
+                if (
+                    !await videoDomainService.WatchVideoForUpFriendlyMode(
+                        detail,
+                        ck,
+                        CancellationToken.None
+                    )
+                )
+                {
+                    logger.LogError("UP友好播放失败，跳过当前候选");
+                    continue;
+                }
+            }
+
+            if (_dailyTaskOptions.IsUpFriendlyMode && _dailyTaskOptions.SelectFavorite)
+            {
+                string folderName = string.IsNullOrWhiteSpace(_dailyTaskOptions.FavoriteFolderName)
+                    ? "BiliBiliToolPro-UP支持"
+                    : _dailyTaskOptions.FavoriteFolderName.Trim();
+                long? folderId = await favoriteDomainService.GetOrCreateFolderAsync(
+                    folderName,
+                    ck,
+                    video.Aid
+                );
+                if (folderId.HasValue)
+                {
+                    bool favoriteSucceeded = await favoriteDomainService.AddVideoAsync(
+                        video.Aid,
+                        folderId.Value,
+                        "333.1007.tianma.3-4-10.click",
+                        "333.788.0.0",
+                        "",
+                        ck
+                    );
+                    if (!favoriteSucceeded)
+                    {
+                        logger.LogWarning("收藏视频失败，将继续执行投币");
+                    }
+                }
+                else
+                {
+                    logger.LogWarning("未能获取UP友好模式专用收藏夹，将继续执行投币");
+                }
+            }
 
             bool re = await DoAddCoinForVideo(video, _dailyTaskOptions.SelectLike, ck);
             if (!re)

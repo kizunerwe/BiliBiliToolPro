@@ -438,6 +438,12 @@ public class VipBigPointDomainServiceTest
         public Task<int> GetVideoCountOfUp(long upId, BiliCookie ck) =>
             throw new NotImplementedException();
 
+        public Task<bool> WatchVideoForUpFriendlyMode(
+            VideoDetail video,
+            BiliCookie ck,
+            CancellationToken cancellationToken
+        ) => Task.FromResult(true);
+
         public Task WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck) =>
             throw new NotImplementedException();
 
