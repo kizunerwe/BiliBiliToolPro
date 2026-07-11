@@ -7,22 +7,9 @@
 <!-- TOC depthFrom:2 -->
 
 - [1. 步骤](#1-步骤)
-    - [1.1. 登录青龙面板并修改配置](#11-登录青龙面板并修改配置)
-    - [1.2. 在青龙面板中添加拉库定时任务](#12-在青龙面板中添加拉库定时任务)
-        - [1.2.1. 方式一：订阅管理](#121-方式一订阅管理)
-        - [1.2.2. 方式二：定时任务拉库](#122-方式二定时任务拉库)
-    - [1.3. 检查定时任务](#13-检查定时任务)
-    - [1.4. 配置青龙Client Secret（可选）](#14-配置青龙client-secret可选)
-        - [1.4.1. 新建 Application](#141-新建-application)
-        - [1.4.2. 密钥配置到环境变量](#142-密钥配置到环境变量)
-    - [1.5. Bili登录](#15-bili登录)
-- [2. 先行版](#2-先行版)
-- [3. GitHub加速](#3-github加速)
+- [2. UP友好模式（可选）](#2-up友好模式可选)
+- [3. GitHub 加速](#3-github-加速)
 - [4. 常见问题](#4-常见问题)
-    - [4.1. 安装dotnet失败怎么办法](#41-安装dotnet失败怎么办法)
-    - [4.2. Couldn't find a valid ICU package installed on the system](#42-couldnt-find-a-valid-icu-package-installed-on-the-system)
-    - [4.3. 提示文件不存在或路径异常，怎么排查](#43-提示文件不存在或路径异常怎么排查)
-    - [4.4. The configured user limit (128) on the number of inotify instances has been reached](#44-the-configured-user-limit-128-on-the-number-of-inotify-instances-has-been-reached)
 
 <!-- /TOC -->
 
@@ -111,36 +98,31 @@ Name分别为：
 
 首次运行会自动安装环境，时间可能长一点，之后就不需要重复安装了。
 
-## 2. 先行版
+## 2. UP友好模式（可选）
 
-青龙拉库时可以指定分支，develop分支的代码会超前于默认的main分支，包含当前正在开发的新功能。
+开启后，每个待投币视频会按实际经过时间发送播放心跳：短视频默认看完，长视频默认观看 60 秒，每约 15 秒上报一次进度。该模式不会下载完整音视频媒体；已验证可以形成账号观看历史，但无法保证 UP 后台采用相同统计口径。播放成功后再按现有开关点赞、投币，并可选收藏到独立收藏夹。
 
-想提前体验新功能，或想要Bug能快速得到解决的朋友，可以尝试切换先行版，但同时也意味着稳定性会相应降低（其实可以忽略不计~🤨）。
+在青龙环境变量中添加：
 
-```
-分支：develop
-白名单：bili_dev_task_.+\.sh
-```
-
-其他选项同上。
-
-## 3. GitHub加速
-
-拉库时，如果服务器在国内，访问GitHub速度慢，可在仓库地址前加上加速代理进行加速。
-
-如：
-
-```
-https://github.moeyy.xyz/https://github.com/kizunerwe/BiliBiliToolPro.git
-https://gh-proxy.com/https://github.com/kizunerwe/BiliBiliToolPro.git
-...
+```bash
+Ray_DailyTaskConfig__IsUpFriendlyMode=true
+Ray_DailyTaskConfig__UpFriendlyWatchSeconds=60
+Ray_DailyTaskConfig__SelectFavorite=false
+Ray_DailyTaskConfig__FavoriteFolderName=BiliBiliToolPro-UP支持
 ```
 
-加速代理地址通常不能保证长期稳定，请自行查找使用。
+- `SelectLike` 继续控制投币时是否联动点赞。
+- `SelectFavorite` 默认关闭；开启后只使用指定的独立收藏夹，不移动或删除账号原有收藏。
+- 观看或收藏失败会写入日志；观看失败会跳过该视频，收藏失败仍继续投币。
+- 开启后任务耗时会增加。默认配置下，投 5 枚币最多约增加 5 分钟；实际耗时取决于待投币数量、视频长度和观看秒数配置。
+
+## 3. GitHub 加速
+
+如需使用下载代理，请通过 `BILI_GITHUB_PROXY` 配置可信地址。第三方代理可能失效或存在供应链风险，请自行确认来源。
 
 ## 4. 常见问题
 
-### 4.1. 安装dotnet失败怎么办法
+### 4.1. 安装 .NET 失败怎么办
 
 首先，青龙有两个版本的镜像：
 
@@ -157,12 +139,12 @@ https://gh-proxy.com/https://github.com/kizunerwe/BiliBiliToolPro.git
 
 ```
 export BILI_MODE="bilitool" # bili运行模式，dotnet或bilitool
-export BILI_GITHUB_PROXY="https://github.moeyy.xyz/" # 下载二进制包时使用的加速代理，不要的话则置空
+export BILI_GITHUB_PROXY="" # 可选：可信的下载代理地址，不使用则留空
 ```
 
 ![qinglong-login.png](../docs/imgs/qinglong-run-as-bilitool.png)
 
-bilitool没有先行版的概念，因为只有main分支才会打包，更新会稍慢一点。
+`bilitool` 模式使用 `main` 分支发布的二进制包。
 
 当前任务脚本还会执行以下保护：
 

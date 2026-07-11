@@ -154,7 +154,7 @@ export Ray_DailyTaskConfig__NumberOfCoins="3"
 dotnet Ray.BiliBiliTool.Console.dll
 ```
 
-注意Console需要添加`Ray_`前缀，win系统使用`set`关键字代替`export`。
+Console 和青龙环境变量推荐统一添加 `Ray_` 前缀；无前缀写法仅作为 .NET 配置系统的兼容方式。Windows 命令行使用 `set` 代替 `export`。
 
 <a id="markdown-14-方式四托管在青龙面板上使用面板的环境变量页或配置文件页进行配置" name="14-方式四托管在青龙面板上使用面板的环境变量页或配置文件页进行配置"></a>
 ### 1.4. 方式四：托管在青龙面板上，使用面板的环境变量页或配置文件页进行配置
@@ -165,7 +165,7 @@ dotnet Ray.BiliBiliTool.Console.dll
 
 例如：
 
-名称：`Ray_BiliBiliCookies__1`
+名称：`Ray_BiliBiliCookies__0`
 
 值：`abcde`
 
@@ -176,7 +176,7 @@ dotnet Ray.BiliBiliTool.Console.dll
 例如，配置Cookie和推送：
 
 ```
-export Ray_BiliBiliCookies__1="_uuid=abc..."
+export Ray_BiliBiliCookies__0="_uuid=abc..."
 export Ray_Serilog__WriteTo__9__Args__token="abcde"
 ```
 
@@ -346,8 +346,22 @@ Console项目（青龙）的环境变量需要添加`Ray_`前缀，其他不用�
 | 值域    | [true,false]                  |
 | 默认值   | false                         |
 
-<a id="markdown-335-优先选择支持的up主id集合" name="335-优先选择支持的up主id集合"></a>
-#### 3.3.5. 优先选择支持的up主Id集合
+<a id="markdown-335-up-友好模式" name="335-up-友好模式"></a>
+#### 3.3.5. UP 友好模式
+
+开启后，每个待投币视频会先按实际经过时间发送播放心跳，再执行收藏、投币和联动点赞。短于配置时长的视频默认看完，较长视频默认观看 60 秒。该模式不会下载完整音视频媒体；已验证可以形成账号观看历史，但无法保证 UP 后台采用相同统计口径。
+
+| 配置Key | 值域 | 默认值 |
+| --- | --- | --- |
+| `DailyTaskConfig__IsUpFriendlyMode` | [true,false] | false |
+| `DailyTaskConfig__UpFriendlyWatchSeconds` | 正整数，长视频计划观看秒数 | 60 |
+| `DailyTaskConfig__SelectFavorite` | [true,false]，是否收藏待投币视频 | false |
+| `DailyTaskConfig__FavoriteFolderName` | 非空收藏夹名称 | BiliBiliToolPro-UP支持 |
+
+收藏功能只使用指定的独立收藏夹，不移动或删除账号原有收藏。观看失败会跳过当前视频；收藏失败会记录日志，但仍继续投币。点赞继续由 `DailyTaskConfig__SelectLike` 控制。
+
+<a id="markdown-336-优先选择支持的-up-主-id-集合" name="336-优先选择支持的-up-主-id-集合"></a>
+#### 3.3.6. 优先选择支持的 UP 主 ID 集合
 
 通过填入自己选择的up主ID，以后观看、分享和投币，都会优先从配置的up主下面挑选视频，如果没有找到,则会去你的**特别关注**列表中随机再获取，再然后会去**普通关注**列表中随机获取，最后会去排行榜中随机获取。
 
@@ -363,8 +377,8 @@ Console项目（青龙）的环境变量需要添加`Ray_`前缀，其他不用�
 
 <img src="/docs/imgs/get-up-id.png" alt="get-up-id" width="800" />
 
-<a id="markdown-336-每月几号自动领取会员权益" name="336-每月几号自动领取会员权益"></a>
-#### 3.3.6. 每月几号自动领取会员权益
+<a id="markdown-337-每月几号自动领取会员权益" name="337-每月几号自动领取会员权益"></a>
+#### 3.3.7. 每月几号自动领取会员权益
 
 |   TITLE   | CONTENT   |
 | ---------- | -------------- |
@@ -372,8 +386,8 @@ Console项目（青龙）的环境变量需要添加`Ray_`前缀，其他不用�
 | 值域   | [-1,31]，-1表示不指定，默认每月1号；0表示不领取 |
 | 默认值   | 1 |
 
-<a id="markdown-337-每月几号进行直播中心银瓜子兑换硬币" name="337-每月几号进行直播中心银瓜子兑换硬币"></a>
-#### 3.3.7. 每月几号进行直播中心银瓜子兑换硬币
+<a id="markdown-338-每月几号进行直播中心银瓜子兑换硬币" name="338-每月几号进行直播中心银瓜子兑换硬币"></a>
+#### 3.3.8. 每月几号进行直播中心银瓜子兑换硬币
 
 |   TITLE   | CONTENT   |
 | ---------- | -------------- |

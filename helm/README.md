@@ -1,3 +1,6 @@
+> [!WARNING]
+> 此部署方式属于上游历史遗留，当前 fork 不作为主要维护范围，文档中的旧镜像或命令可能已经过时。推荐使用 [青龙部署](../qinglong/README.md)，继续使用前请自行核实镜像来源和版本。
+
 <!--- app-name: bilibili-tool -->
 
 # BiliBili Tool
