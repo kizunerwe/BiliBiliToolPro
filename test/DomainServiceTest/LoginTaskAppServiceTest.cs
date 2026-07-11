@@ -156,7 +156,7 @@ public class LoginTaskAppServiceTest
             return Task.FromResult(true);
         }
 
-        public Task SaveAccessKeyToQingLongAsync(
+        public Task<bool> SaveAccessKeyToQingLongAsync(
             string userId,
             string accessKey,
             CancellationToken cancellationToken
@@ -164,7 +164,7 @@ public class LoginTaskAppServiceTest
         {
             SaveAccessKeyToQingLongCalled = true;
             SavedAccessKey = accessKey;
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
     }
 }

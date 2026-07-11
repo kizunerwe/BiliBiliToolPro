@@ -57,12 +57,59 @@ public class AccessKeyTaskAppServiceTest
         }
     }
 
+    [Fact]
+    public async Task DoTaskAsync_ShouldThrow_WhenQingLongPersistenceFails()
+    {
+        await GlobalServiceProviderTestLock.Gate.WaitAsync();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?> { ["PlatformType"] = "QingLong" }
+            )
+            .Build();
+        var previousProvider = Global.ServiceProviderRoot;
+        Global.ServiceProviderRoot = new ServiceCollection().AddLogging().BuildServiceProvider();
+
+        try
+        {
+            var fakeLoginDomainService = new FakeLoginDomainService { QingLongSaveResult = false };
+            var cookieFactory = new CookieStrFactory<BiliCookie>(
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(
+                        new Dictionary<string, string?>
+                        {
+                            ["BiliBiliCookies:0"] =
+                                "DedeUserID=565140580;SESSDATA=sess;bili_jct=csrf;buvid3=buvid",
+                        }
+                    )
+                    .Build()
+            );
+            var appService = new Ray.BiliBiliTool.Application.AccessKeyTaskAppService(
+                configuration,
+                NullLogger<Ray.BiliBiliTool.Application.AccessKeyTaskAppService>.Instance,
+                fakeLoginDomainService,
+                new FakeAccountDomainService(),
+                cookieFactory
+            );
+
+            await Assert.ThrowsAsync<Ray.BiliBiliTool.Application.Contracts.TaskExecutionException>(
+                () =>
+                    appService.DoTaskAsync()
+            );
+        }
+        finally
+        {
+            Global.ServiceProviderRoot = previousProvider;
+            GlobalServiceProviderTestLock.Gate.Release();
+        }
+    }
+
     private sealed class FakeLoginDomainService : ILoginDomainService
     {
         public bool TryGetAccessKeyCalled { get; private set; }
         public bool SaveAccessKeyToQingLongCalled { get; private set; }
         public bool SaveAccessKeyToJsonCalled { get; private set; }
         public string? SavedAccessKey { get; private set; }
+        public bool QingLongSaveResult { get; init; } = true;
 
         public Task<BiliCookie> LoginByQrCodeAsync(CancellationToken cancellationToken) =>
             throw new NotImplementedException();
@@ -103,7 +150,7 @@ public class AccessKeyTaskAppServiceTest
             CancellationToken cancellationToken
         ) => throw new NotImplementedException();
 
-        public Task SaveAccessKeyToQingLongAsync(
+        public Task<bool> SaveAccessKeyToQingLongAsync(
             string userId,
             string accessKey,
             CancellationToken cancellationToken
@@ -111,7 +158,7 @@ public class AccessKeyTaskAppServiceTest
         {
             SaveAccessKeyToQingLongCalled = true;
             SavedAccessKey = accessKey;
-            return Task.CompletedTask;
+            return Task.FromResult(QingLongSaveResult);
         }
     }
 

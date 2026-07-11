@@ -131,12 +131,28 @@ public class BiliBiliToolHostedService(
     private async Task DoTasksAsync(string[] tasks, CancellationToken cancellationToken)
     {
         using IServiceScope scope = serviceProvider.CreateScope();
+        var failedTasks = new List<string>();
         foreach (string task in tasks)
         {
-            var type = TaskTypeFactory.Get(task);
+            try
+            {
+                var type = TaskTypeFactory.Get(task);
+                IAppService appService = (IAppService)
+                    scope.ServiceProvider.GetRequiredService(type);
+                await appService.DoTaskAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                failedTasks.Add(task);
+                logger.LogError(ex, "任务 {task} 执行失败，继续执行后续任务", task);
+            }
+        }
 
-            IAppService appService = (IAppService)scope.ServiceProvider.GetRequiredService(type);
-            await appService.DoTaskAsync(cancellationToken);
+        if (failedTasks.Count > 0)
+        {
+            throw new TaskExecutionException(
+                $"{failedTasks.Count} 个任务执行失败：{string.Join(", ", failedTasks)}"
+            );
         }
     }
 

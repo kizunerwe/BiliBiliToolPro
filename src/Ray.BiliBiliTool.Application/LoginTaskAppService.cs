@@ -56,7 +56,14 @@ public class LoginTaskAppService(
         //更新cookie到青龙env
         if (platformType == PlatformType.QingLong)
         {
-            await loginDomainService.SaveCookieToQinLongAsync(ckInfo, cancellationToken);
+            bool saved = await loginDomainService.SaveCookieToQinLongAsync(
+                ckInfo,
+                cancellationToken
+            );
+            if (!saved)
+            {
+                throw new TaskExecutionException("Cookie 保存到青龙失败");
+            }
             return;
         }
 
@@ -64,7 +71,7 @@ public class LoginTaskAppService(
         await loginDomainService.SaveCookieToJsonFileAsync(ckInfo, cancellationToken);
     }
 
-    [TaskInterceptor("持久化 access_key", rethrowWhenException: false)]
+    [TaskInterceptor("持久化 access_key")]
     private async Task SaveAccessKeyAsync(
         string userId,
         string accessKey,
@@ -80,11 +87,15 @@ public class LoginTaskAppService(
         var platformType = configuration.GetSection("PlatformType").Get<PlatformType>();
         if (platformType == PlatformType.QingLong)
         {
-            await loginDomainService.SaveAccessKeyToQingLongAsync(
+            bool saved = await loginDomainService.SaveAccessKeyToQingLongAsync(
                 userId,
                 accessKey,
                 cancellationToken
             );
+            if (!saved)
+            {
+                throw new TaskExecutionException("access_key 保存到青龙失败");
+            }
             return;
         }
 

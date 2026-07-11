@@ -49,7 +49,7 @@ public interface ILoginDomainService : IDomainService
     /// <summary>
     /// 持久化 access_key 到青龙环境变量
     /// </summary>
-    Task SaveAccessKeyToQingLongAsync(
+    Task<bool> SaveAccessKeyToQingLongAsync(
         string userId,
         string accessKey,
         CancellationToken cancellationToken

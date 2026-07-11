@@ -17,6 +17,7 @@ using Ray.BiliBiliTool.Config.Options;
 using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 using Ray.BiliBiliTool.Infrastructure.Cookie;
+using Ray.BiliBiliTool.Infrastructure.IO;
 
 namespace Ray.BiliBiliTool.DomainService;
 
@@ -338,15 +339,20 @@ public class LoginDomainService(
         vipBigPointConfig["AccessKeys"] = accessKeys;
         root["VipBigPointConfig"] = vipBigPointConfig;
 
-        await File.WriteAllTextAsync(
+        await AtomicFileWriter.WriteAsync(
             fileInfo.PhysicalPath!,
-            root.ToString(Formatting.Indented),
+            async stream =>
+            {
+                await using var writer = new StreamWriter(stream, leaveOpen: true);
+                await writer.WriteAsync(root.ToString(Formatting.Indented));
+                await writer.FlushAsync(cancellationToken);
+            },
             cancellationToken
         );
         logger.LogInformation("已保存 VipBigPoint access_key 到本地 cookies.json");
     }
 
-    public async Task SaveAccessKeyToQingLongAsync(
+    public async Task<bool> SaveAccessKeyToQingLongAsync(
         string userId,
         string accessKey,
         CancellationToken cancellationToken
@@ -382,8 +388,14 @@ public class LoginDomainService(
                 };
 
                 var updateRe = await qingLongApi.UpdateEnvsAsync(update, token);
-                logger.LogInformation(updateRe.Code == 200 ? "更新成功！" : updateRe.ToJsonStr());
-                return;
+                if (updateRe.Code != 200)
+                {
+                    logger.LogError("更新青龙 access_key 失败，返回码：{code}", updateRe.Code);
+                    return false;
+                }
+
+                logger.LogInformation("更新成功！");
+                return true;
             }
 
             logger.LogInformation("不存在 access_key，开始新增");
@@ -395,11 +407,19 @@ public class LoginDomainService(
             };
 
             var addRe = await qingLongApi.AddEnvsAsync([add], token);
-            logger.LogInformation(addRe.Code == 200 ? "新增成功！" : addRe.ToJsonStr());
+            if (addRe.Code != 200)
+            {
+                logger.LogError("新增青龙 access_key 失败，返回码：{code}", addRe.Code);
+                return false;
+            }
+
+            logger.LogInformation("新增成功！");
+            return true;
         }
         catch (Exception ex)
         {
             logger.LogWarning("保存 access_key 到青龙失败：{msg}", ex.Message);
+            return false;
         }
     }
 
@@ -595,8 +615,15 @@ public class LoginDomainService(
     {
         var newJson = string.Join(Environment.NewLine, lines);
 
-        await using var sw = new StreamWriter(fileInfo.PhysicalPath!);
-        await sw.WriteAsync(newJson);
+        await AtomicFileWriter.WriteAsync(
+            fileInfo.PhysicalPath!,
+            async stream =>
+            {
+                await using var writer = new StreamWriter(stream, leaveOpen: true);
+                await writer.WriteAsync(newJson);
+                await writer.FlushAsync();
+            }
+        );
     }
 
     private async Task<IFileInfo> EnsureLocalConfigFileAsync()
@@ -652,7 +679,7 @@ public class LoginDomainService(
     {
         logger.LogError("持久化失败，青龙版本高于2.18，请手动添加环境变量到青龙");
         logger.LogWarning("变量Key：{key}", "Ray_BiliBiliCookies__0");
-        logger.LogWarning("变量值：{value}", ckInfo.CookieStr);
+        logger.LogWarning("Cookie 内容已隐藏，请在青龙环境变量页面手动填写");
         logger.LogWarning(
             "如果Key已存在，请自行+1，如Ray_BiliBiliCookies__1，Ray_BiliBiliCookies__2..."
         );

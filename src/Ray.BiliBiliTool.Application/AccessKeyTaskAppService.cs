@@ -22,9 +22,13 @@ public class AccessKeyTaskAppService(
     {
         if (cookieStrFactory.Count != 1)
         {
-            logger.LogWarning("当前需隔离到单账号环境后再执行 AccessKey 任务");
-            logger.LogWarning("当前账号个数：{count}", cookieStrFactory.Count);
-            return;
+            logger.LogError(
+                "AccessKey 任务要求单账号环境，当前账号个数：{count}",
+                cookieStrFactory.Count
+            );
+            throw new TaskExecutionException(
+                $"AccessKey 任务要求单账号环境，当前账号个数：{cookieStrFactory.Count}"
+            );
         }
 
         var ck = cookieStrFactory.GetCookie(0);
@@ -35,18 +39,21 @@ public class AccessKeyTaskAppService(
         );
         if (string.IsNullOrWhiteSpace(accessKey))
         {
-            logger.LogWarning("未获取到 access_key");
-            return;
+            throw new TaskExecutionException("未获取到 access_key");
         }
 
         var platformType = configuration.GetSection("PlatformType").Get<PlatformType>();
         if (platformType == PlatformType.QingLong)
         {
-            await loginDomainService.SaveAccessKeyToQingLongAsync(
+            bool saved = await loginDomainService.SaveAccessKeyToQingLongAsync(
                 ck.UserId,
                 accessKey,
                 cancellationToken
             );
+            if (!saved)
+            {
+                throw new TaskExecutionException("access_key 保存到青龙失败");
+            }
             return;
         }
 
