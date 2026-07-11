@@ -104,6 +104,17 @@ bilitool_installed_version=0
 cd "$qinglong_bili_repo_dir"
 mkdir -p bin && cd "$qinglong_bili_repo_dir/bin"
 
+lock_file="/tmp/bilitool-${qinglong_bili_repo//\//_}.lock"
+if ! command -v flock >/dev/null 2>&1; then
+    say_err "缺少flock命令，请安装util-linux后重试"
+    exit 1
+fi
+exec 9>"$lock_file"
+if ! flock -n 9; then
+    say_err "已有BiliBiliTool任务正在运行，本次任务退出"
+    exit 1
+fi
+
 # 判断是否存在某指令
 machine_has() {
     eval $invocation
@@ -330,7 +341,7 @@ install_dotnet_by_script() {
     eval $invocation
 
     say "再尝试使用官方脚本安装"
-    curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 8.0 --verbose
+    curl --fail --show-error --location --retry 3 https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 8.0 --verbose
 
     say "添加到PATH"
     local exportFile="/root/.bashrc"
@@ -350,16 +361,9 @@ install_dotnet() {
     if [[ $current_linux_os == "debian" ]]; then
         say "使用apt安装"
 
-        if ! (curl -s -m 5 www.google.com >/dev/nul); then
-            say "机器位于墙内，切换为包源为国内镜像源"
-            cp /etc/apt/sources.list /etc/apt/sources.list.bak
-            sed -i 's/https:\/\/deb.debian.org/https:\/\/mirrors.ustc.edu.cn/g' /etc/apt/sources.list
-            sed -i 's/http:\/\/deb.debian.org/https:\/\/mirrors.ustc.edu.cn/g' /etc/apt/sources.list
-            apt-get update
-        fi
         {
             . /etc/os-release
-            curl -o packages-microsoft-prod.deb https://packages.microsoft.com/config/debian/$VERSION_ID/packages-microsoft-prod.deb
+            curl --fail --show-error --location --retry 3 -o packages-microsoft-prod.deb https://packages.microsoft.com/config/debian/$VERSION_ID/packages-microsoft-prod.deb
             dpkg -i packages-microsoft-prod.deb
             rm packages-microsoft-prod.deb
             apt-get update && apt-get install -y dotnet-sdk-8.0
@@ -368,13 +372,6 @@ install_dotnet() {
         }
     else
         say "使用apk安装"
-        if ! (curl -s -m 5 www.google.com >/dev/nul); then
-            say "机器位于墙内，切换为包源为国内镜像源"
-            cp /etc/apk/repositories /etc/apk/repositories.bak
-            sed -i 's/https:\/\/dl-cdn.alpinelinux.org/https:\/\/mirrors.ustc.edu.cn/g' /etc/apk/repositories
-            sed -i 's/http:\/\/dl-cdn.alpinelinux.org/https:\/\/mirrors.ustc.edu.cn/g' /etc/apk/repositories
-            apk update
-        fi
         {
             apk add dotnet8-sdk # https://pkgs.alpinelinux.org/packages
         } || {
@@ -402,11 +399,15 @@ install_bilitool() {
 
     say "开始安装bilitool"
     # 获取最新的release信息
-    LATEST_RELEASE=$(curl -s https://api.github.com/repos/$bili_repo/releases/latest)
+    LATEST_RELEASE=$(curl --fail --show-error --location --retry 3 "https://api.github.com/repos/$bili_repo/releases/latest")
 
     # 解析最新的tag名称
     check_jq
-    LATEST_TAG=$(echo $LATEST_RELEASE | jq -r '.tag_name')
+    LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+    if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+        say_err "无法从GitHub获取有效的最新版本号"
+        return 1
+    fi
     say "最新版本：$LATEST_TAG"
 
     # 读取之前存储的tag并比较
@@ -414,15 +415,22 @@ install_bilitool() {
         # 如果不一样，则需要更新安装
         ASSET_URL=$(get_download_url $LATEST_TAG)
 
-        # 使用curl下载文件到当前目录下的test.zip文件
-        local zip_file_name="bilitool-$LATEST_TAG.zip"
-        curl -L -o "$zip_file_name" $ASSET_URL
+        local temp_dir
+        temp_dir=$(mktemp -d "$qinglong_bili_repo_dir/bin/.bilitool-update.XXXXXX")
+        local zip_file_name="$temp_dir/bilitool-$LATEST_TAG.zip"
+        curl --fail --show-error --location --retry 3 -o "$zip_file_name" "$ASSET_URL"
 
-        # 解压
         check_unzip
-        unzip -jo "$zip_file_name" -d ./ &&
-            rm "$zip_file_name" &&
-            rm -f appsettings.*
+        mkdir -p "$temp_dir/extracted"
+        unzip -jo "$zip_file_name" -d "$temp_dir/extracted"
+        if [ ! -f "$temp_dir/extracted/Ray.BiliBiliTool.Console" ]; then
+            rm -rf "$temp_dir"
+            say_err "下载包中未找到Ray.BiliBiliTool.Console"
+            return 1
+        fi
+        cp -f "$temp_dir/extracted/"* ./
+        rm -rf "$temp_dir"
+        rm -f appsettings.*
 
         # 更新tag.txt文件
         echo $LATEST_TAG >./tag.txt
@@ -444,6 +452,7 @@ install() {
                 say_err "安装失败"
                 say_err "请根据文档自行在青龙容器中安装dotnet：https://learn.microsoft.com/zh-cn/dotnet/core/install/linux-$current_linux_os"
                 say_err "或者尝试切换运行模式为bilitool，它不需要安装dotnet：https://github.com/${bili_repo}/blob/main/qinglong/README.md"
+                return 1
             }
         fi
 
@@ -451,8 +460,31 @@ install() {
             install_bilitool || {
                 say_err "安装失败，请检查日志并重试"
                 say_err "或者尝试切换运行模式为dotnet：https://github.com/${bili_repo}/blob/main/qinglong/README.md"
+                return 1
             }
         fi
+    fi
+
+    check_installed || {
+        say_err "安装后验证失败"
+        return 1
+    }
+}
+
+publish_console() {
+    local publish_dir="$qinglong_bili_repo_dir/bin/publish"
+    local revision_file="$publish_dir/revision.txt"
+    local current_revision
+    current_revision=$(git -C "$qinglong_bili_repo_dir" rev-parse HEAD 2>/dev/null || echo unknown)
+    local published_revision=""
+    if [ -f "$revision_file" ]; then
+        published_revision=$(cat "$revision_file")
+    fi
+
+    if [ ! -f "$publish_dir/Ray.BiliBiliTool.Console.dll" ] || [ "$published_revision" != "$current_revision" ]; then
+        say "源码已更新，开始发布Console产物"
+        dotnet publish "$qinglong_bili_repo_dir/src/Ray.BiliBiliTool.Console/Ray.BiliBiliTool.Console.csproj" -c Release -o "$publish_dir"
+        echo "$current_revision" >"$revision_file"
     fi
 }
 
@@ -468,7 +500,8 @@ run_task() {
     cd "$qinglong_bili_repo_dir/src/Ray.BiliBiliTool.Console"
 
     if [ "$prefer_mode" == "dotnet" ]; then
-        dotnet run --ENVIRONMENT=Production
+        publish_console
+        dotnet "$qinglong_bili_repo_dir/bin/publish/Ray.BiliBiliTool.Console.dll" --ENVIRONMENT=Production
     else
         cp -f "$qinglong_bili_repo_dir/bin/Ray.BiliBiliTool.Console" .
         chmod +x ./Ray.BiliBiliTool.Console && ./Ray.BiliBiliTool.Console --ENVIRONMENT=Production
@@ -476,4 +509,4 @@ run_task() {
 }
 
 check_os
-install
+install || exit 1

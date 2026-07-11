@@ -164,6 +164,25 @@ export BILI_GITHUB_PROXY="https://github.moeyy.xyz/" # 下载二进制包时使�
 
 bilitool没有先行版的概念，因为只有main分支才会打包，更新会稍慢一点。
 
+当前任务脚本还会执行以下保护：
+
+- 同一个仓库同一时间只允许一个 BiliBiliTool 任务运行，重复任务会直接退出，避免并发编译、更新和重复操作账号。
+- `dotnet` 模式只在源码版本变化时重新发布 Console，日常任务直接运行发布产物，不再每次执行 `dotnet run`。
+- 安装、下载或安装后校验失败时，任务会返回失败状态，不再继续运行损坏或缺失的程序。
+- 青龙 OpenAPI 保存 Cookie 或 `access_key` 失败时，任务会返回失败；日志不会输出完整 Cookie 或 `access_key`。
+
+本地稳定测试可运行：
+
+```powershell
+./scripts/ut.ps1
+```
+
+真实 B 站接口测试不会进入普通验证；如需手动运行：
+
+```powershell
+./scripts/ut.ps1 -External
+```
+
 另外，alpine版的问题，我不建议来提交issue，因为已经大大超出本项目的scope了，建议可以去给alpine官方或微软的dotnet官方提交issue。
 
 ### 4.2. Couldn't find a valid ICU package installed on the system
