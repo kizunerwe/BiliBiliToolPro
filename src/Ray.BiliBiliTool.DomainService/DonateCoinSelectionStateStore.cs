@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Ray.BiliBiliTool.Infrastructure;
+using Ray.BiliBiliTool.Infrastructure.IO;
 
 namespace Ray.BiliBiliTool.DomainService;
 
@@ -134,8 +135,10 @@ public sealed class DonateCoinSelectionStateStore(
             Directory.CreateDirectory(directory);
         }
 
-        await using var stream = File.Create(_stateFilePath);
-        await JsonSerializer.SerializeAsync(stream, document, _jsonSerializerOptions);
+        await AtomicFileWriter.WriteAsync(
+            _stateFilePath,
+            stream => JsonSerializer.SerializeAsync(stream, document, _jsonSerializerOptions)
+        );
     }
 
     private static DonateCoinAccountSelectionStateSnapshot CreateSnapshot(

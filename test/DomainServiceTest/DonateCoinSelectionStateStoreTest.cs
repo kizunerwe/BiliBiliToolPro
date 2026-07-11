@@ -25,6 +25,8 @@ public sealed class DonateCoinSelectionStateStoreTest
                 new DonateCoinConfigUpProgressSnapshot(3, new DateOnly(2026, 6, 27), 2, 1)
             );
 
+            Assert.Empty(Directory.GetFiles(tempDirectory, ".donate-coin-state.json.*.tmp"));
+
             var reloaded = new DonateCoinSelectionStateStore(
                 NullLogger<DonateCoinSelectionStateStore>.Instance,
                 stateFilePath
