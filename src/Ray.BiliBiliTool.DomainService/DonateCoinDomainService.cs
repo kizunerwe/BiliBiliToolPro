@@ -717,14 +717,14 @@ public class DonateCoinDomainService(
     {
         if (_blacklistedAidSet.Contains(aid))
         {
-            logger.LogDebug("已记录，跳过");
+            logger.LogInformation("跳过候选视频 Av{aid}：已在投币进度中记录", aid);
             return DonateCoinVideoEligibility.Blacklisted;
         }
 
         var aidText = aid.ToString();
         if (_attemptedVideoAidSet.Contains(aidText))
         {
-            logger.LogDebug("重复视频，丢弃处理");
+            logger.LogInformation("跳过候选视频 Av{aid}：本轮已尝试过", aid);
             return DonateCoinVideoEligibility.DuplicateInCurrentRun;
         }
 
@@ -744,7 +744,7 @@ public class DonateCoinDomainService(
             {
                 await IncreaseConfigUpRecordedCountIfNeededAsync(ck.UserId, configUpId.Value, aid);
             }
-            logger.LogDebug("已投过，记下");
+            logger.LogInformation("跳过候选视频 Av{aid}：已投过{num}枚硬币", aid, multiply.Value);
             return DonateCoinVideoEligibility.AlreadyDonated;
         }
 

@@ -46,8 +46,7 @@ public class VideoDomainService(
     {
         try
         {
-            int plannedSeconds = (int)
-                Math.Min(video.Duration, _dailyTaskOptions.UpFriendlyWatchSeconds);
+            int plannedSeconds = GetPlannedWatchSeconds(video.Duration);
             long startTs = DateTime.Now.ToTimeStamp();
             int progress = 0;
             if (!await UploadUpFriendlyHeartbeat(video, ck, startTs, progress, 1))
@@ -230,6 +229,27 @@ public class VideoDomainService(
     /// </summary>
     public async Task WatchVideo(VideoInfoDto videoInfo, BiliCookie ck)
     {
+        if (_dailyTaskOptions.IsUpFriendlyMode)
+        {
+            VideoDetail detail = await GetVideoDetailForPlaybackSession(videoInfo);
+            bool succeeded = await WatchVideoForUpFriendlyMode(detail, ck, CancellationToken.None);
+            if (succeeded)
+            {
+                _expDic.TryGetValue("每日观看视频", out int exp);
+                int plannedPlayedTime = GetPlannedWatchSeconds(detail.Duration);
+                logger.LogInformation(
+                    "视频播放成功，已观看到第{playedTime}秒，经验+{exp} √",
+                    plannedPlayedTime,
+                    exp
+                );
+            }
+            else
+            {
+                logger.LogError("视频播放失败");
+            }
+            return;
+        }
+
         //开始上报一次
         await OpenVideo(videoInfo, ck);
 
@@ -265,6 +285,30 @@ public class VideoDomainService(
         {
             logger.LogError("视频播放失败，原因：{msg}", apiResponse.Message);
         }
+    }
+
+    private async Task<VideoDetail> GetVideoDetailForPlaybackSession(VideoInfoDto videoInfo)
+    {
+        if (videoInfo.Cid > 0)
+        {
+            return new VideoDetail
+            {
+                Aid = long.Parse(videoInfo.Aid),
+                Bvid = videoInfo.Bvid,
+                Cid = videoInfo.Cid,
+                Title = videoInfo.Title,
+                Duration = videoInfo.Duration ?? _dailyTaskOptions.UpFriendlyWatchSeconds,
+                Copyright = videoInfo.Copyright,
+            };
+        }
+
+        return await GetVideoDetail(videoInfo.Aid);
+    }
+
+    private int GetPlannedWatchSeconds(long duration)
+    {
+        long actualDuration = duration > 0 ? duration : _dailyTaskOptions.UpFriendlyWatchSeconds;
+        return (int)Math.Min(actualDuration, _dailyTaskOptions.UpFriendlyWatchSeconds);
     }
 
     /// <summary>

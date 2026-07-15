@@ -14,6 +14,88 @@ namespace DomainServiceTest;
 public sealed class UpFriendlyWatchVideoTest
 {
     [Fact]
+    public async Task WatchVideo_ShouldUsePlaybackSessionWhenUpFriendlyModeEnabled()
+    {
+        var videoApi = new FakeVideoApi();
+        var delay = new FakeTaskDelay();
+        var videoWithoutCookieApi = new FakeVideoWithoutCookieApi();
+        var service = new VideoDomainService(
+            NullLogger<VideoDomainService>.Instance,
+            new TestOptionsMonitor<DailyTaskOptions>(
+                new() { IsUpFriendlyMode = true, UpFriendlyWatchSeconds = 60 }
+            ),
+            new FakeRelationApi(),
+            videoApi,
+            videoWithoutCookieApi,
+            new RankingVideoCache(),
+            delay
+        );
+
+        await service.WatchVideo(
+            new()
+            {
+                Aid = "1",
+                Bvid = "BV1",
+                Title = "test",
+                Cid = 2,
+                Duration = 40,
+            },
+            CreateCookie()
+        );
+
+        Assert.Equal([15, 15, 10], delay.Seconds);
+        Assert.Equal([1, 0, 0, 0, 2], videoApi.Requests.Select(x => x.Play_type));
+        Assert.Equal([0, 15, 30, 40, 40], videoApi.Requests.Select(x => x.Played_time));
+        Assert.Equal(2L, videoApi.Requests.Select(x => x.Cid).Distinct().Single());
+        Assert.Empty(videoWithoutCookieApi.RequestedAids);
+    }
+
+    [Fact]
+    public async Task WatchVideo_ShouldLoadVideoDetailWhenCidIsMissing()
+    {
+        var videoApi = new FakeVideoApi();
+        var delay = new FakeTaskDelay();
+        var videoWithoutCookieApi = new FakeVideoWithoutCookieApi
+        {
+            Detail = new VideoDetail
+            {
+                Aid = 1,
+                Bvid = "BV1",
+                Title = "test",
+                Cid = 22,
+                Duration = 30,
+            },
+        };
+        var service = new VideoDomainService(
+            NullLogger<VideoDomainService>.Instance,
+            new TestOptionsMonitor<DailyTaskOptions>(
+                new() { IsUpFriendlyMode = true, UpFriendlyWatchSeconds = 60 }
+            ),
+            new FakeRelationApi(),
+            videoApi,
+            videoWithoutCookieApi,
+            new RankingVideoCache(),
+            delay
+        );
+
+        await service.WatchVideo(
+            new()
+            {
+                Aid = "1",
+                Bvid = "BV1",
+                Title = "test",
+                Cid = 0,
+                Duration = 30,
+            },
+            CreateCookie()
+        );
+
+        Assert.Equal(["1"], videoWithoutCookieApi.RequestedAids);
+        Assert.Equal(22L, videoApi.Requests.Select(x => x.Cid).Distinct().Single());
+        Assert.Equal([0, 15, 30, 30], videoApi.Requests.Select(x => x.Played_time));
+    }
+
+    [Fact]
     public async Task WatchVideo_ShouldWaitInFifteenSecondSegmentsAndPauseAtConfiguredProgress()
     {
         var videoApi = new FakeVideoApi();
@@ -148,8 +230,22 @@ public sealed class UpFriendlyWatchVideoTest
 
     private sealed class FakeVideoWithoutCookieApi : IVideoWithoutCookieApi
     {
-        public Task<BiliApiResponse<VideoDetail>> GetVideoDetail(string aid) =>
-            throw new NotImplementedException();
+        public VideoDetail? Detail { get; set; }
+
+        public List<string> RequestedAids { get; } = [];
+
+        public Task<BiliApiResponse<VideoDetail>> GetVideoDetail(string aid)
+        {
+            RequestedAids.Add(aid);
+            return Task.FromResult(
+                new BiliApiResponse<VideoDetail>
+                {
+                    Code = 0,
+                    Message = "0",
+                    Data = Detail ?? throw new InvalidOperationException("Missing fake detail"),
+                }
+            );
+        }
 
         public Task<BiliApiResponse<Ranking>> GetRegionRankingVideosV2() =>
             throw new NotImplementedException();

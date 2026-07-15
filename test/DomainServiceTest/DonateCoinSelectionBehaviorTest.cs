@@ -57,6 +57,7 @@ public sealed class DonateCoinSelectionBehaviorTest
 
             Assert.Contains("【视频来源】配置UP", logger.Messages);
             Assert.Contains(logger.Messages, x => x.Contains("【配置UP】487417170：0/3"));
+            Assert.Contains("跳过候选视频 Av100：已投过1枚硬币", logger.Messages);
             Assert.True(
                 logger.Messages.IndexOf("【视频】video-101")
                     < logger.Messages.IndexOf("【视频】video-102")
