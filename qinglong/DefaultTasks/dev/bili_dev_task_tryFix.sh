@@ -3,7 +3,7 @@
 # new Env("bili尝试修复异常[dev先行版]")
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$script_dir/../bilitool_lock.sh"
+. "$script_dir/../bili_task_bilitool_lock.sh"
 
 dir_shell=$QL_DIR/shell
 . $dir_shell/share.sh

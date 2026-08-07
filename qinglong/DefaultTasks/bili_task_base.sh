@@ -65,7 +65,7 @@ say_verbose() {
 }
 
 script_dir="$(cd "$(dirname "$BASH_SOURCE")" && pwd)"
-. "$script_dir/bilitool_lock.sh"
+. "$script_dir/bili_task_bilitool_lock.sh"
 
 current_linux_os="debian"  # 或alpine
 current_os="linux"         # 或linux-musl
