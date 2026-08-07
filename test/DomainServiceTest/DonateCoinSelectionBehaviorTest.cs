@@ -56,7 +56,11 @@ public sealed class DonateCoinSelectionBehaviorTest
             await domainService.AddCoinsForVideos(CreateCookie("10001"));
 
             Assert.Contains("【视频来源】配置UP", logger.Messages);
-            Assert.Contains(logger.Messages, x => x.Contains("【配置UP】487417170：0/3"));
+            Assert.Contains(
+                logger.Messages,
+                x => x.Contains("【配置UP】487417170：已记录 0 / 当前视频 3")
+            );
+            Assert.Contains(logger.Messages, x => x.Contains("扫描进行中"));
             Assert.Contains("跳过候选视频 Av100：已投过1枚硬币", logger.Messages);
             Assert.True(
                 logger.Messages.IndexOf("【视频】video-101")

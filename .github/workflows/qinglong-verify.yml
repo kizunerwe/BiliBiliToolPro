@@ -46,38 +46,7 @@ jobs:
       - name: Build Console
         run: dotnet build src/Ray.BiliBiliTool.Console/Ray.BiliBiliTool.Console.csproj -c Release --no-restore
       - name: Stable domain tests
-        id: stable-domain-tests
-        continue-on-error: true
-        run: dotnet test test/DomainServiceTest/DomainServiceTest.csproj -c Release --filter "Category!=External" --logger "trx;LogFileName=domain-tests.trx" -- xunit.parallelizeTestCollections=false
-      - name: Report stable domain test failures
-        if: steps.stable-domain-tests.outcome == 'failure'
-        run: |
-          python3 - <<'PY'
-          import glob
-          import html
-          import xml.etree.ElementTree as ET
-
-          paths = glob.glob('**/domain-tests.trx', recursive=True)
-          if not paths:
-              print('::error title=Stable domain tests::TRX result file was not produced')
-              raise SystemExit(1)
-
-          root = ET.parse(paths[0]).getroot()
-          failed = []
-          for result in root.findall('.//{*}UnitTestResult'):
-              if result.attrib.get('outcome') != 'Failed':
-                  continue
-              name = result.attrib.get('testName', 'unknown test')
-              message = result.findtext('.//{*}Message') or 'no failure message'
-              stack = result.findtext('.//{*}StackTrace') or ''
-              detail = ' '.join((message + ' ' + stack).split())
-              failed.append((name, detail))
-
-          for name, detail in failed:
-              print(f'::error title=Stable domain test failed::{html.escape(name)}: {html.escape(detail)}')
-
-          print(f'Found {len(failed)} failed stable domain test(s)')
-          raise SystemExit(1)
+        run: dotnet test test/DomainServiceTest/DomainServiceTest.csproj -c Release --filter "Category!=External" -- xunit.parallelizeTestCollections=false
       - name: Infrastructure tests
         run: dotnet test test/InfrastructureTest/InfrastructureTest.csproj -c Release
       - name: QingLong shell checks
