@@ -5,6 +5,7 @@ using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.Relation;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Interfaces;
 using Ray.BiliBiliTool.Config.Options;
+using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 
 namespace Ray.BiliBiliTool.DomainService;
@@ -46,7 +47,7 @@ public class DonateCoinDomainService(
     /// <summary>
     /// 完成投币任务
     /// </summary>
-    public async Task AddCoinsForVideos(BiliCookie ck)
+    public async Task<TaskStepResult> AddCoinsForVideos(BiliCookie ck)
     {
         ResetRuntimeSelectionState();
         await LoadPersistentSelectionStateAsync(ck.UserId);
@@ -54,7 +55,7 @@ public class DonateCoinDomainService(
         int needCoins = await GetNeedDonateCoinNum(ck);
         int protectedCoins = _dailyTaskOptions.NumberOfProtectedCoins;
         if (needCoins <= 0)
-            return;
+            return TaskStepResult.Skip("没有需要投币的视频");
 
         decimal coinBalance = await coinDomainService.GetCoinBalance(ck);
         logger.LogInformation("【投币前余额】 : {coinBalance}", coinBalance);
@@ -66,13 +67,13 @@ public class DonateCoinDomainService(
         if (coinBalance <= 0)
         {
             logger.LogInformation("因硬币余额不足，今日暂不执行投币任务");
-            return;
+            return TaskStepResult.Skip("硬币余额不足");
         }
 
         if (coinBalance <= protectedCoins)
         {
             logger.LogInformation("因硬币余额达到或低于保留值，今日暂不执行投币任务");
-            return;
+            return TaskStepResult.Skip("硬币余额达到保留值");
         }
 
         if (coinBalance < needCoins)
@@ -92,6 +93,8 @@ public class DonateCoinDomainService(
 
         int success = 0;
         bool exhausted = false;
+        bool retryableFailure = false;
+        string? failureReason = null;
         logger.LogInformation("{message}", DonateCoinLogFormatter.BuildSelectionPlan());
 
         for (int i = 1; i <= MaxSelectionAttempts && success < needCoins; i++)
@@ -99,9 +102,13 @@ public class DonateCoinDomainService(
             logger.LogDebug("开始尝试第{num}次", i);
 
             var selection = await TryGetCanDonateVideoWithSource(ck);
-            if (selection == null)
+            if (selection.Video == null)
             {
                 exhausted = true;
+                retryableFailure =
+                    selection.ConfigUpScanStatus == DonateCoinConfigUpScanStatus.RetryableFailure
+                    || selection.RetryableFailure;
+                failureReason = selection.FailureReason;
                 break;
             }
 
@@ -122,6 +129,8 @@ public class DonateCoinDomainService(
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "获取视频详情失败，跳过当前候选：{message}", ex.Message);
+                    retryableFailure = true;
+                    failureReason = ex.Message;
                     continue;
                 }
                 if (
@@ -133,6 +142,8 @@ public class DonateCoinDomainService(
                 )
                 {
                     logger.LogError("UP友好播放失败，跳过当前候选");
+                    retryableFailure = true;
+                    failureReason = "UP友好播放失败";
                     continue;
                 }
             }
@@ -168,9 +179,15 @@ public class DonateCoinDomainService(
                 }
             }
 
-            bool re = await DoAddCoinForVideo(video, _dailyTaskOptions.SelectLike, ck);
-            if (!re)
+            var coinResult = await AddCoinForVideoResultAsync(
+                video,
+                _dailyTaskOptions.SelectLike,
+                ck
+            );
+            if (coinResult.Status == TaskStepStatus.Failed)
             {
+                retryableFailure = true;
+                failureReason = coinResult.Reason;
                 continue;
             }
 
@@ -203,6 +220,15 @@ public class DonateCoinDomainService(
             "【硬币余额】{coin}",
             (await accountApi.GetCoinBalanceAsync(ck.ToString())).Data?.Money ?? 0
         );
+
+        if (success == needCoins)
+            return TaskStepResult.Success();
+        if (retryableFailure)
+            return TaskStepResult.Fail(failureReason ?? "视频投币存在可重试失败");
+        if (exhausted)
+            return TaskStepResult.Skip("已确认没有可投视频");
+
+        return TaskStepResult.Fail("视频投币未完成目标");
     }
 
     /// <summary>
@@ -213,49 +239,34 @@ public class DonateCoinDomainService(
     {
         ResetRuntimeSelectionState();
         await LoadPersistentSelectionStateAsync(ck.UserId);
-        return (await TryGetCanDonateVideoWithSource(ck))?.Video;
+        return (await TryGetCanDonateVideoWithSource(ck)).Video;
     }
 
-    private async Task<DonateCoinVideoSelectionResult?> TryGetCanDonateVideoWithSource(
-        BiliCookie ck
-    )
+    private async Task<DonateCoinSourceSearchResult> TryGetCanDonateVideoWithSource(BiliCookie ck)
     {
         var configUpResult = await TryGetCanDonateVideoByConfigUps(ck);
         if (configUpResult.Video != null)
-        {
-            return new DonateCoinVideoSelectionResult(
-                configUpResult.Video,
-                configUpResult.Source,
-                configUpResult.ConfigUpId
-            );
-        }
+            return configUpResult;
+        if (configUpResult.ConfigUpScanStatus == DonateCoinConfigUpScanStatus.RetryableFailure)
+            return configUpResult;
         LogSourceFailure(configUpResult, DonateCoinVideoSource.SpecialFollowings);
 
         var specialResult = await TryGetCanDonateVideoBySpecialUps(ck);
         if (specialResult.Video != null)
-        {
-            return new DonateCoinVideoSelectionResult(specialResult.Video, specialResult.Source);
-        }
+            return specialResult;
         LogSourceFailure(specialResult, DonateCoinVideoSource.Followings);
 
         var followingResult = await TryGetCanDonateVideoByFollowingUps(ck);
         if (followingResult.Video != null)
-        {
-            return new DonateCoinVideoSelectionResult(
-                followingResult.Video,
-                followingResult.Source
-            );
-        }
+            return followingResult;
         LogSourceFailure(followingResult, DonateCoinVideoSource.Ranking);
 
         var rankingResult = await TryGetCanDonateVideoByRegion(RankingTryCount, ck);
         if (rankingResult.Video != null)
-        {
-            return new DonateCoinVideoSelectionResult(rankingResult.Video, rankingResult.Source);
-        }
+            return rankingResult;
         LogSourceFailure(rankingResult);
 
-        return null;
+        return rankingResult;
     }
 
     /// <summary>
@@ -264,7 +275,16 @@ public class DonateCoinDomainService(
     /// <returns>是否投币成功</returns>
     public async Task<bool> DoAddCoinForVideo(UpVideoInfo video, bool select_like, BiliCookie ck)
     {
-        BiliApiResponse result;
+        var result = await AddCoinForVideoResultAsync(video, select_like, ck);
+        return result.Status == TaskStepStatus.Succeeded;
+    }
+
+    private async Task<TaskStepResult> AddCoinForVideoResultAsync(
+        UpVideoInfo video,
+        bool select_like,
+        BiliCookie ck
+    )
+    {
         try
         {
             var request = new AddCoinRequest(video.Aid, ck.BiliJct)
@@ -273,29 +293,28 @@ public class DonateCoinDomainService(
             };
             var referer =
                 $"https://www.bilibili.com/video/{video.Bvid}/?spm_id_from=333.1007.tianma.1-1-1.click&vd_source=80c1601a7003934e7a90709c18dfcffd";
-            result = await videoApi.AddCoinForVideo(request, ck.ToString(), referer);
-        }
-        catch (Exception)
-        {
-            return false;
-        }
+            var result = await videoApi.AddCoinForVideo(request, ck.ToString(), referer);
+            if (result.Code == 0)
+            {
+                _expDic.TryGetValue("每日投币", out int exp);
+                logger.LogInformation("投币成功，经验+{exp} √", exp);
+                return TaskStepResult.Success();
+            }
 
-        if (result.Code == 0)
-        {
-            _expDic.TryGetValue("每日投币", out int exp);
-            logger.LogInformation("投币成功，经验+{exp} √", exp);
-            return true;
-        }
+            if (_donateContinueStatusDic.Any(x => x.Key == result.Code.ToString()))
+            {
+                logger.LogError("投币失败，原因：{msg}", result.Message);
+                return TaskStepResult.Fail($"视频投币被接口拒绝：{result.Message}");
+            }
 
-        if (_donateContinueStatusDic.Any(x => x.Key == result.Code.ToString()))
-        {
-            logger.LogError("投币失败，原因：{msg}", result.Message);
-            return false;
+            string errorMsg = $"投币发生未预计异常：{result.Message}";
+            logger.LogError(errorMsg);
+            return TaskStepResult.Fail(errorMsg);
         }
-
-        string errorMsg = $"投币发生未预计异常：{result.Message}";
-        logger.LogError(errorMsg);
-        throw new Exception(errorMsg);
+        catch (Exception exception)
+        {
+            return TaskStepResult.Fail($"视频投币请求异常：{exception.Message}");
+        }
     }
 
     #region private
@@ -379,6 +398,7 @@ public class DonateCoinDomainService(
             );
         }
 
+        DonateCoinSourceSearchResult? lastResult = null;
         foreach (var upId in _dailyTaskOptions.SupportUpIdList)
         {
             if (upId == 0 || upId == long.MinValue)
@@ -397,12 +417,20 @@ public class DonateCoinDomainService(
             {
                 return result;
             }
+
+            lastResult = result;
+            if (result.ConfigUpScanStatus == DonateCoinConfigUpScanStatus.RetryableFailure)
+            {
+                return result;
+            }
         }
 
-        return new DonateCoinSourceSearchResult(
-            DonateCoinVideoSource.ConfigUp,
-            FailureReason: "已看完"
-        );
+        return lastResult
+            ?? new DonateCoinSourceSearchResult(
+                DonateCoinVideoSource.ConfigUp,
+                FailureReason: "已确认无可投视频",
+                ConfigUpScanStatus: DonateCoinConfigUpScanStatus.ConfirmedExhausted
+            );
     }
 
     private async Task<DonateCoinSourceSearchResult> TryGetCanDonateVideoByOrderedConfigUp(
@@ -410,28 +438,83 @@ public class DonateCoinDomainService(
         BiliCookie ck
     )
     {
+        DonateCoinConfigUpProgressSnapshot? progress = null;
         try
         {
-            var progress = await EnsureConfigUpProgressAsync(upId, ck);
-            logger.LogInformation(
-                "【配置UP】{upId}：{recordedCount}/{videoCount}",
-                upId,
-                progress.RecordedVideoCount,
-                progress.VideoCount
-            );
+            progress = await EnsureConfigUpProgressAsync(upId, ck);
+            LogConfigUpProgress(upId, progress);
+
+            if (progress.Status == DonateCoinConfigUpScanStatus.ConfirmedExhausted)
+            {
+                return new DonateCoinSourceSearchResult(
+                    DonateCoinVideoSource.ConfigUp,
+                    FailureReason: DonateCoinLogFormatter.BuildConfigUpConfirmedExhausted(),
+                    ConfigUpId: upId,
+                    ConfigUpScanStatus: DonateCoinConfigUpScanStatus.ConfirmedExhausted
+                );
+            }
+
+            progress = progress with
+            {
+                Status = DonateCoinConfigUpScanStatus.InProgress,
+                FailureReason = null,
+            };
+            await SaveConfigUpProgressAsync(ck.UserId, upId, progress);
+            LogConfigUpProgress(upId, progress);
+
+            if (progress.NextPageNumber <= 0)
+            {
+                progress = await MarkConfigUpConfirmedExhaustedAsync(ck.UserId, upId, progress);
+                return new DonateCoinSourceSearchResult(
+                    DonateCoinVideoSource.ConfigUp,
+                    FailureReason: DonateCoinLogFormatter.BuildConfigUpConfirmedExhausted(),
+                    ConfigUpId: upId,
+                    ConfigUpScanStatus: DonateCoinConfigUpScanStatus.ConfirmedExhausted
+                );
+            }
+
             while (progress.NextPageNumber > 0)
             {
-                var pageVideos = await videoDomainService.GetVideosOfUp(
-                    upId,
-                    progress.NextPageNumber,
-                    ConfigUpPageSize,
-                    ck
-                );
+                IReadOnlyList<UpVideoInfo> pageVideos;
+                try
+                {
+                    pageVideos = await videoDomainService.GetVideosOfUp(
+                        upId,
+                        progress.NextPageNumber,
+                        ConfigUpPageSize,
+                        ck
+                    );
+                }
+                catch (Exception exception)
+                {
+                    progress = await MarkConfigUpRetryableFailureAsync(
+                        ck.UserId,
+                        upId,
+                        progress,
+                        $"取第{progress.NextPageNumber}页视频失败：{exception.Message}"
+                    );
+                    return new DonateCoinSourceSearchResult(
+                        DonateCoinVideoSource.ConfigUp,
+                        FailureReason: progress.FailureReason,
+                        ConfigUpId: upId,
+                        ConfigUpScanStatus: DonateCoinConfigUpScanStatus.RetryableFailure
+                    );
+                }
 
                 if (pageVideos.Count == 0)
                 {
-                    progress = await MoveConfigUpCursorBackwardAsync(ck.UserId, upId, progress);
-                    continue;
+                    progress = await MarkConfigUpRetryableFailureAsync(
+                        ck.UserId,
+                        upId,
+                        progress,
+                        $"第{progress.NextPageNumber}页返回空列表"
+                    );
+                    return new DonateCoinSourceSearchResult(
+                        DonateCoinVideoSource.ConfigUp,
+                        FailureReason: progress.FailureReason,
+                        ConfigUpId: upId,
+                        ConfigUpScanStatus: DonateCoinConfigUpScanStatus.RetryableFailure
+                    );
                 }
 
                 foreach (var video in pageVideos.Reverse())
@@ -445,22 +528,70 @@ public class DonateCoinDomainService(
                             ConfigUpId: upId
                         );
                     }
+
+                    if (eligibility == DonateCoinVideoEligibility.CheckFailed)
+                    {
+                        progress = await MarkConfigUpRetryableFailureAsync(
+                            ck.UserId,
+                            upId,
+                            progress,
+                            $"检查Av{video.Aid}投币状态失败，保留第{progress.NextPageNumber}页待重试"
+                        );
+                        return new DonateCoinSourceSearchResult(
+                            DonateCoinVideoSource.ConfigUp,
+                            FailureReason: progress.FailureReason,
+                            ConfigUpId: upId,
+                            ConfigUpScanStatus: DonateCoinConfigUpScanStatus.RetryableFailure
+                        );
+                    }
+
+                    if (eligibility == DonateCoinVideoEligibility.DuplicateInCurrentRun)
+                    {
+                        progress = await MarkConfigUpRetryableFailureAsync(
+                            ck.UserId,
+                            upId,
+                            progress,
+                            $"Av{video.Aid}本轮已尝试但尚无持久终态，保留第{progress.NextPageNumber}页待重试"
+                        );
+                        return new DonateCoinSourceSearchResult(
+                            DonateCoinVideoSource.ConfigUp,
+                            FailureReason: progress.FailureReason,
+                            ConfigUpId: upId,
+                            ConfigUpScanStatus: DonateCoinConfigUpScanStatus.RetryableFailure
+                        );
+                    }
                 }
 
                 progress = await MoveConfigUpCursorBackwardAsync(ck.UserId, upId, progress);
             }
+
+            progress = await MarkConfigUpConfirmedExhaustedAsync(ck.UserId, upId, progress);
         }
         catch (Exception e)
         {
+            if (progress != null)
+            {
+                progress = await MarkConfigUpRetryableFailureAsync(
+                    ck.UserId,
+                    upId,
+                    progress,
+                    $"配置UP扫描失败：{e.Message}"
+                );
+            }
+
             return new DonateCoinSourceSearchResult(
                 DonateCoinVideoSource.ConfigUp,
-                FailureReason: $"取视频失败：{e.Message}"
+                FailureReason: progress?.FailureReason ?? $"取视频失败：{e.Message}",
+                ConfigUpId: upId,
+                ConfigUpScanStatus: DonateCoinConfigUpScanStatus.RetryableFailure
             );
         }
 
         return new DonateCoinSourceSearchResult(
             DonateCoinVideoSource.ConfigUp,
-            FailureReason: "已看完"
+            FailureReason: DonateCoinLogFormatter.BuildConfigUpConfirmedExhausted(),
+            ConfigUpId: upId,
+            ConfigUpScanStatus: DonateCoinConfigUpScanStatus.ConfirmedExhausted
         );
     }
 
@@ -470,23 +601,49 @@ public class DonateCoinDomainService(
     )
     {
         var today = DateOnly.FromDateTime(DateTime.Now);
+        _configUpProgressByUpId.TryGetValue(upId, out var previous);
         if (
-            _configUpProgressByUpId.TryGetValue(upId, out var progress)
-            && progress.VideoCountUpdatedOn == today
+            previous is not null
+            && previous.VideoCountUpdatedOn == today
+            && previous.Status != DonateCoinConfigUpScanStatus.Unknown
+            && (
+                previous.Status == DonateCoinConfigUpScanStatus.ConfirmedExhausted
+                || previous.NextPageNumber > 0
+            )
         )
         {
-            return progress;
+            return previous;
         }
 
         var videoCount = await GetVideoCountOfUpWithCacheAsync(upId, ck);
-        var recordedVideoCount = _configUpProgressByUpId.TryGetValue(upId, out var currentProgress)
-            ? currentProgress.RecordedVideoCount
-            : 0;
-        progress = new DonateCoinConfigUpProgressSnapshot(
+        var recordedVideoCount = previous?.RecordedVideoCount ?? 0;
+        if (
+            previous?.Status == DonateCoinConfigUpScanStatus.ConfirmedExhausted
+            && videoCount >= previous.VideoCount
+        )
+        {
+            var newVideoCount = Math.Max(0, videoCount - previous.VideoCount);
+            var optimizedStatus =
+                newVideoCount == 0
+                    ? DonateCoinConfigUpScanStatus.ConfirmedExhausted
+                    : DonateCoinConfigUpScanStatus.InProgress;
+            var optimizedProgress = new DonateCoinConfigUpProgressSnapshot(
+                videoCount,
+                today,
+                GetConfigUpStartPageNumber(newVideoCount),
+                recordedVideoCount,
+                optimizedStatus
+            );
+            await SaveConfigUpProgressAsync(ck.UserId, upId, optimizedProgress);
+            return optimizedProgress;
+        }
+
+        var progress = new DonateCoinConfigUpProgressSnapshot(
             videoCount,
             today,
             GetConfigUpStartPageNumber(videoCount),
-            recordedVideoCount
+            recordedVideoCount,
+            DonateCoinConfigUpScanStatus.Unknown
         );
         await SaveConfigUpProgressAsync(ck.UserId, upId, progress);
         return progress;
@@ -498,9 +655,81 @@ public class DonateCoinDomainService(
         DonateCoinConfigUpProgressSnapshot progress
     )
     {
-        var updated = progress with { NextPageNumber = Math.Max(0, progress.NextPageNumber - 1) };
+        var nextPageNumber = Math.Max(0, progress.NextPageNumber - 1);
+        var updated = progress with
+        {
+            NextPageNumber = nextPageNumber,
+            Status =
+                nextPageNumber == 0
+                    ? DonateCoinConfigUpScanStatus.ConfirmedExhausted
+                    : DonateCoinConfigUpScanStatus.InProgress,
+            FailureReason = null,
+        };
         await SaveConfigUpProgressAsync(userId, upId, updated);
+        LogConfigUpProgress(upId, updated);
         return updated;
+    }
+
+    private async Task<DonateCoinConfigUpProgressSnapshot> MarkConfigUpRetryableFailureAsync(
+        string userId,
+        long upId,
+        DonateCoinConfigUpProgressSnapshot progress,
+        string reason
+    )
+    {
+        var updated = progress with
+        {
+            Status = DonateCoinConfigUpScanStatus.RetryableFailure,
+            FailureReason = reason,
+        };
+        await SaveConfigUpProgressAsync(userId, upId, updated);
+        LogConfigUpProgress(upId, updated);
+        return updated;
+    }
+
+    private async Task<DonateCoinConfigUpProgressSnapshot> MarkConfigUpConfirmedExhaustedAsync(
+        string userId,
+        long upId,
+        DonateCoinConfigUpProgressSnapshot progress
+    )
+    {
+        var updated = progress with
+        {
+            NextPageNumber = 0,
+            Status = DonateCoinConfigUpScanStatus.ConfirmedExhausted,
+            FailureReason = null,
+        };
+        await SaveConfigUpProgressAsync(userId, upId, updated);
+        LogConfigUpProgress(upId, updated);
+        return updated;
+    }
+
+    private void LogConfigUpProgress(long upId, DonateCoinConfigUpProgressSnapshot progress)
+    {
+        var statusMessage = progress.Status switch
+        {
+            DonateCoinConfigUpScanStatus.ConfirmedExhausted =>
+                DonateCoinLogFormatter.BuildConfigUpConfirmedExhausted(),
+            DonateCoinConfigUpScanStatus.RetryableFailure =>
+                DonateCoinLogFormatter.BuildConfigUpRetryableFailure(),
+            _ => DonateCoinLogFormatter.BuildConfigUpInProgress(),
+        };
+
+        logger.LogInformation(
+            "【配置UP】{upId}：已记录 {recordedCount} / 当前视频 {videoCount}，{status}",
+            upId,
+            progress.RecordedVideoCount,
+            progress.VideoCount,
+            statusMessage
+        );
+
+        if (
+            progress.Status == DonateCoinConfigUpScanStatus.RetryableFailure
+            && !string.IsNullOrWhiteSpace(progress.FailureReason)
+        )
+        {
+            logger.LogWarning("【配置UP】{upId}：{reason}", upId, progress.FailureReason);
+        }
     }
 
     private static int GetConfigUpStartPageNumber(int videoCount)
@@ -515,7 +744,16 @@ public class DonateCoinDomainService(
             request,
             ck.ToString()
         );
-        if (specials.Data == null || specials.Data.Count == 0)
+        if (specials.Code != 0 || specials.Data is null)
+        {
+            return new DonateCoinSourceSearchResult(
+                DonateCoinVideoSource.SpecialFollowings,
+                FailureReason: $"获取特别关注列表失败：{specials.Message ?? specials.Code.ToString()}",
+                RetryableFailure: true
+            );
+        }
+
+        if (specials.Data.Count == 0)
         {
             return new DonateCoinSourceSearchResult(
                 DonateCoinVideoSource.SpecialFollowings,
@@ -540,6 +778,12 @@ public class DonateCoinDomainService(
             request,
             ck.ToString()
         );
+        if (result.Code != 0 || result.Data is null)
+            return new DonateCoinSourceSearchResult(
+                DonateCoinVideoSource.Followings,
+                FailureReason: $"获取关注列表失败：{result.Message ?? result.Code.ToString()}",
+                RetryableFailure: true
+            );
         if (result.Data.Total == 0)
         {
             return new DonateCoinSourceSearchResult(
@@ -760,14 +1004,13 @@ public class DonateCoinDomainService(
                 return multiply;
             }
 
-            multiply = (
-                await videoApi.GetDonatedCoinsForVideo(
-                    new GetAlreadyDonatedCoinsRequest(long.Parse(aid)),
-                    ck.ToString()
-                )
-            )
-                .Data
-                .Multiply;
+            var response = await videoApi.GetDonatedCoinsForVideo(
+                new GetAlreadyDonatedCoinsRequest(long.Parse(aid)),
+                ck.ToString()
+            );
+            if (response.Code != 0 || response.Data is null)
+                return null;
+            multiply = response.Data.Multiply;
             _videoCoinCountCache[aid] = multiply;
             return multiply;
         }
@@ -808,7 +1051,9 @@ public class DonateCoinDomainService(
         DonateCoinVideoSource Source,
         UpVideoInfo? Video = null,
         string? FailureReason = null,
-        long? ConfigUpId = null
+        long? ConfigUpId = null,
+        DonateCoinConfigUpScanStatus? ConfigUpScanStatus = null,
+        bool RetryableFailure = false
     );
 
     private enum DonateCoinVideoEligibility

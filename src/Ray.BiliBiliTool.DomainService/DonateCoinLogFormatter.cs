@@ -46,6 +46,12 @@ public static class DonateCoinLogFormatter
         return $"【选源】排行榜：获取失败，可能触发风控或验证码，已跳过。{detail}";
     }
 
+    public static string BuildConfigUpConfirmedExhausted() => "已确认无可投视频";
+
+    public static string BuildConfigUpRetryableFailure() => "扫描中断，保留当前页待重试";
+
+    public static string BuildConfigUpInProgress() => "扫描进行中";
+
     private static string GetSourceName(DonateCoinVideoSource source)
     {
         return source switch

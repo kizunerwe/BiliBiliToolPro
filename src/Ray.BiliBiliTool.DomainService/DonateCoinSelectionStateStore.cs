@@ -12,7 +12,7 @@ public sealed class DonateCoinSelectionStateStore(
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _stateFilePath =
-        stateFilePath ?? Path.Combine(AppContext.BaseDirectory, "config", "donate-coin-state.json");
+        stateFilePath ?? Path.Combine(GetApplicationRootDirectory(), "config", "donate-coin-state.json");
     private readonly JsonSerializerOptions _jsonSerializerOptions = new(
         JsonSerializerOptionsBuilder.DefaultOptions
     )
@@ -21,6 +21,17 @@ public sealed class DonateCoinSelectionStateStore(
     };
 
     private DonateCoinSelectionStateDocument? _cachedState;
+
+    private static string GetApplicationRootDirectory()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null && !string.Equals(directory.Name, "bin", StringComparison.OrdinalIgnoreCase))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.Parent?.FullName ?? AppContext.BaseDirectory;
+    }
 
     public async Task<DonateCoinAccountSelectionStateSnapshot> GetAccountStateAsync(string userId)
     {
@@ -65,6 +76,8 @@ public sealed class DonateCoinSelectionStateStore(
                     VideoCountUpdatedOn = progress.VideoCountUpdatedOn,
                     NextPageNumber = progress.NextPageNumber,
                     RecordedVideoCount = progress.RecordedVideoCount,
+                    Status = progress.Status,
+                    FailureReason = progress.FailureReason,
                 };
             }
         );
@@ -153,7 +166,9 @@ public sealed class DonateCoinSelectionStateStore(
                     x.Value.VideoCount,
                     x.Value.VideoCountUpdatedOn,
                     x.Value.NextPageNumber,
-                    x.Value.RecordedVideoCount
+                    x.Value.RecordedVideoCount,
+                    x.Value.Status,
+                    x.Value.FailureReason
                 )
             )
         );
@@ -171,7 +186,8 @@ public sealed class DonateCoinSelectionStateStore(
         public Dictionary<
             long,
             DonateCoinConfigUpProgressState
-        > ConfigUpProgressByUpId { get; set; } = [];
+        > ConfigUpProgressByUpId
+        { get; set; } = [];
     }
 
     private sealed class DonateCoinConfigUpProgressState
@@ -183,6 +199,10 @@ public sealed class DonateCoinSelectionStateStore(
         public int NextPageNumber { get; set; }
 
         public int RecordedVideoCount { get; set; }
+
+        public DonateCoinConfigUpScanStatus Status { get; set; }
+
+        public string? FailureReason { get; set; }
     }
 }
 
@@ -199,5 +219,15 @@ public sealed record DonateCoinConfigUpProgressSnapshot(
     int VideoCount,
     DateOnly VideoCountUpdatedOn,
     int NextPageNumber,
-    int RecordedVideoCount
+    int RecordedVideoCount,
+    DonateCoinConfigUpScanStatus Status = DonateCoinConfigUpScanStatus.Unknown,
+    string? FailureReason = null
 );
+
+public enum DonateCoinConfigUpScanStatus
+{
+    Unknown = 0,
+    InProgress = 1,
+    ConfirmedExhausted = 2,
+    RetryableFailure = 3,
+}
