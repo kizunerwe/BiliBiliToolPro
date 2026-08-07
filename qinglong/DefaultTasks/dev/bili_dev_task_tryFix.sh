@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# cron:0 0 1 1 *
+# cron:45 0 1 * *
 # new Env("bili尝试修复异常[dev先行版]")
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/../bilitool_lock.sh"
 
 dir_shell=$QL_DIR/shell
 . $dir_shell/share.sh
@@ -18,6 +21,18 @@ if [ -z "$qinglong_bili_repo_dir" ]; then
     echo "未找到 bili 仓库目录"
     echo "查找目标：$qinglong_bili_repo"
     echo "请确认已在青龙中拉取仓库 ${bili_repo}${bili_branch}，或通过环境变量 BILI_REPO / BILI_BRANCH 覆盖默认值"
+    exit 1
+fi
+
+lock_wait_seconds="${BILITOOL_LOCK_WAIT_SECONDS:-7200}"
+lock_key="$(bilitool_lock_key "$qinglong_bili_repo_dir" "$bili_branch")"
+lock_file="/tmp/bilitool-${lock_key}.lock"
+if ! command -v flock >/dev/null 2>&1; then
+    echo "缺少flock命令，请安装util-linux后重试"
+    exit 1
+fi
+if ! acquire_bilitool_lock "$lock_file" "$lock_wait_seconds"; then
+    echo "获取BiliBiliTool锁失败，已等待 ${lock_wait_seconds} 秒"
     exit 1
 fi
 

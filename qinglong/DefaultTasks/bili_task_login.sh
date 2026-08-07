@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cron:0 0 1 1 *
+# cron:20 0 1 * *
 # new Env("bili扫码登录")
 
 . bili_task_base.sh

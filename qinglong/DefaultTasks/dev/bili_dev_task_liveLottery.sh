@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cron:0 13 * * *
+# cron:5 13 * * *
 # new Env("bili天选时刻[dev先行版]")
 
 . bili_dev_task_base.sh

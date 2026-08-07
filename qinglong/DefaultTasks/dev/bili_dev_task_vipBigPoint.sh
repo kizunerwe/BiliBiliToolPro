@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cron:7 1 * * *
+# cron:12 1 * * *
 # new Env("bili大会员大积分[dev先行版]")
 
 . bili_dev_task_base.sh
