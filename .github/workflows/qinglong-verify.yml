@@ -46,7 +46,7 @@ jobs:
       - name: Build Console
         run: dotnet build src/Ray.BiliBiliTool.Console/Ray.BiliBiliTool.Console.csproj -c Release --no-restore
       - name: Stable domain tests
-        run: dotnet test test/DomainServiceTest/DomainServiceTest.csproj -c Release --filter "Category!=External"
+        run: dotnet test test/DomainServiceTest/DomainServiceTest.csproj -c Release --filter "Category!=External" -- xunit.parallelizeTestCollections=false
       - name: Infrastructure tests
         run: dotnet test test/InfrastructureTest/InfrastructureTest.csproj -c Release
       - name: QingLong shell checks
