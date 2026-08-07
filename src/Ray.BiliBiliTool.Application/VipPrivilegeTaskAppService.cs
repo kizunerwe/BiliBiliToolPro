@@ -6,6 +6,7 @@ using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Application.Attributes;
 using Ray.BiliBiliTool.Application.Contracts;
 using Ray.BiliBiliTool.Config.Options;
+using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 using Ray.BiliBiliTool.Infrastructure.Cookie;
 using Ray.BiliBiliTool.Infrastructure.Enums;
@@ -37,7 +38,24 @@ public class VipPrivilegeTaskAppService(
         await SetCookiesAsync(ck, cancellationToken);
         UserInfo userInfo = await Login(ck);
 
-        await ReceiveVipPrivilege(userInfo, ck);
+        var result = await vipPrivilegeDomainService.ReceiveVipPrivilege(userInfo, ck);
+        if (result.Status == TaskStepStatus.Failed)
+            throw new TaskExecutionException($"领取大会员福利失败：{result.Reason}");
+
+        if (result.Status == TaskStepStatus.Skipped)
+        {
+            logger.LogInformation("领取大会员福利跳过：{reason}", result.Reason);
+            return;
+        }
+
+        try
+        {
+            await accountDomainService.LoginByCookie(ck);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError("领取福利成功，但之后刷新用户信息时异常，信息：{msg}", ex.Message);
+        }
     }
 
     [TaskInterceptor("Set Cookie")]
@@ -68,28 +86,6 @@ public class VipPrivilegeTaskAppService(
     {
         UserInfo userInfo = await accountDomainService.LoginByCookie(ck);
         return userInfo;
-    }
-
-    /// <summary>
-    /// 每月领取大会员福利
-    /// </summary>
-    [TaskInterceptor("领取", rethrowWhenException: false)]
-    private async Task ReceiveVipPrivilege(UserInfo userInfo, BiliCookie ck)
-    {
-        var suc = await vipPrivilegeDomainService.ReceiveVipPrivilege(userInfo, ck);
-
-        //如果领取成功，需要刷新账户信息（比如B币余额）
-        if (suc)
-        {
-            try
-            {
-                await accountDomainService.LoginByCookie(ck);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError("领取福利成功，但之后刷新用户信息时异常，信息：{msg}", ex.Message);
-            }
-        }
     }
 
     private async Task SaveCookieAsync(BiliCookie ckInfo, CancellationToken cancellationToken)

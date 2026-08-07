@@ -55,12 +55,12 @@ public class LiveDomainService(
     {
         var response = await liveApi.Sign(ck.ToString());
 
-        if (response.Code == 0)
+        if (response.Code == 0 && response.Data is not null)
         {
             logger.LogInformation("【签到结果】成功");
             logger.LogInformation(
                 "【本次获取】{text},{special}",
-                response.Data!.Text,
+                response.Data.Text,
                 response.Data.SpecialText
             );
         }
@@ -90,6 +90,11 @@ public class LiveDomainService(
         BiliApiResponse<LiveWalletStatusResponse> queryStatus = await liveApi.GetLiveWalletStatus(
             ck.ToString()
         );
+        if (queryStatus.Code != 0 || queryStatus.Data is null)
+        {
+            logger.LogInformation("获取直播钱包状态失败：{message}", queryStatus.Message);
+            return false;
+        }
         logger.LogInformation("【银瓜子余额】 {silver}", queryStatus.Data.Silver);
         logger.LogInformation("【硬币余额】 {coin}", queryStatus.Data.Coin);
         logger.LogInformation("【今日剩余兑换次数】 {left}", queryStatus.Data.Silver_2_coin_left);
@@ -100,16 +105,21 @@ public class LiveDomainService(
         logger.LogInformation("开始尝试兑换...");
         Silver2CoinRequest request = new(ck.BiliJct);
         var response = await liveApi.Silver2Coin(request, ck.ToString());
-        if (response.Code == 0)
+        if (response.Code == 0 && response.Data is not null)
         {
             result = true;
             logger.LogInformation("【兑换结果】成功兑换 {coin} 枚硬币", response.Data?.Coin);
             logger.LogInformation("【银瓜子余额】 {silver}", response.Data?.Silver);
         }
+        else if (response.Code == 0)
+        {
+            logger.LogInformation("【兑换结果】失败");
+            logger.LogInformation("【原因】响应缺少数据");
+        }
         else
         {
             logger.LogInformation("【兑换结果】失败");
-            logger.LogInformation("【原因】{reason}", response.Message);
+            logger.LogInformation("【原因】{reason}", response.Message ?? response.Code.ToString());
         }
 
         return result;
@@ -131,7 +141,10 @@ public class LiveDomainService(
         }
 
         //获取直播的分区
-        List<AreaDto> areaList = (await liveApi.GetAreaList(ck.ToString())).Data.Data;
+        var areaResponse = await liveApi.GetAreaList(ck.ToString());
+        if (areaResponse.Code != 0 || areaResponse.Data?.Data is null)
+            throw new InvalidOperationException($"获取直播分区失败：{areaResponse.Message}");
+        List<AreaDto> areaList = areaResponse.Data.Data;
 
         //遍历分区
         int count = 0;
@@ -195,15 +208,17 @@ public class LiveDomainService(
                 return;
             }
 
-            CheckTianXuanDto check = (
-                await liveApi.CheckTianXuan(target.Roomid, ck.ToString())
-            ).Data;
-
-            if (check == null)
+            var checkResponse = await liveApi.CheckTianXuan(target.Roomid, ck.ToString());
+            if (checkResponse.Code != 0 || checkResponse.Data is null)
             {
-                logger.LogDebug("数据异常，跳过");
+                logger.LogWarning(
+                    "【天选查询】失败：{message}",
+                    checkResponse.Message ?? checkResponse.Code.ToString()
+                );
                 return;
             }
+
+            CheckTianXuanDto check = checkResponse.Data;
 
             if (check.Status != TianXuanStatus.Enable)
             {
@@ -334,6 +349,13 @@ public class LiveDomainService(
             new GetFollowingsRequest(long.Parse(ck.UserId), FollowingsOrderType.TimeDesc),
             ck.ToString()
         );
+        if (followings.Code != 0 || followings.Data is null)
+        {
+            throw new InvalidOperationException(
+                $"获取关注列表失败：{followings.Message ?? followings.Code.ToString()}"
+            );
+        }
+
         return followings.Data.List.FirstOrDefault()?.Mid ?? 0;
     }
 
@@ -350,6 +372,13 @@ public class LiveDomainService(
             new GetFollowingsRequest(long.Parse(ck.UserId), FollowingsOrderType.TimeDesc),
             ck.ToString()
         );
+
+        if (followings.Code != 0 || followings.Data is null)
+        {
+            throw new InvalidOperationException(
+                $"获取关注列表失败：{followings.Message ?? followings.Code.ToString()}"
+            );
+        }
 
         foreach (UpInfo item in followings.Data.List)
         {
@@ -382,7 +411,13 @@ public class LiveDomainService(
         long groupId = 0;
         string referer = string.Format(RelationApiConstant.GetTagsReferer, ck.UserId);
         var groups = await relationApi.GetTags(referer);
-        var tianXuanGroup = groups.Data!.FirstOrDefault(x => x.Name == "天选时刻");
+        if (groups.Code != 0 || groups.Data is null)
+        {
+            throw new InvalidOperationException(
+                $"获取分组列表失败：{groups.Message ?? groups.Code.ToString()}"
+            );
+        }
+        var tianXuanGroup = groups.Data.FirstOrDefault(x => x.Name == "天选时刻");
         if (tianXuanGroup == null)
         {
             logger.LogInformation("“天选时刻”分组不存在，尝试创建...");
@@ -391,6 +426,12 @@ public class LiveDomainService(
                 new CreateTagRequest { Tag = "天选时刻", Csrf = ck.BiliJct },
                 ck.ToString()
             );
+            if (createRe.Code != 0 || createRe.Data is null)
+            {
+                throw new InvalidOperationException(
+                    $"创建分组失败：{createRe.Message ?? createRe.Code.ToString()}"
+                );
+            }
             groupId = createRe.Data.Tagid;
             logger.LogInformation("创建成功");
         }
@@ -405,12 +446,35 @@ public class LiveDomainService(
 
     #endregion
 
-    public async Task SendDanmakuToFansMedalLive(BiliCookie ck)
+    public async Task<TaskStepResult> SendDanmakuToFansMedalLive(BiliCookie ck)
+    {
+        try
+        {
+            return await SendDanmakuToFansMedalLiveCoreAsync(ck);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "发送粉丝牌弹幕异常：{message}", exception.Message);
+            return TaskStepResult.Fail($"发送粉丝牌弹幕异常：{exception.Message}");
+        }
+    }
+
+    private async Task<TaskStepResult> SendDanmakuToFansMedalLiveCoreAsync(BiliCookie ck)
     {
         if (!await CheckLiveCookie(ck))
-            return;
+            return TaskStepResult.Fail("直播 Cookie 不可用");
 
-        var infoList = await GetFansMedalInfoList(ck);
+        var infoResult = await GetFansMedalInfoList(ck);
+        var infoList = infoResult.Items;
+        if (infoList.Count == 0)
+        {
+            return infoResult.HasFailure
+                ? TaskStepResult.Fail(infoResult.FailureReason!)
+                : TaskStepResult.Skip("没有符合条件的粉丝牌直播间");
+        }
+
+        var failed = infoResult.HasFailure;
+        string? failureReason = infoResult.FailureReason;
 
         foreach (var info in infoList)
         {
@@ -425,11 +489,13 @@ public class LiveDomainService(
             var req = new GetSpaceInfoDto() { mid = liveHostUserId };
 
             var spaceInfo = await upInfoApi.GetSpaceInfo(req, ck.ToString());
-            if (spaceInfo.Code != 0)
+            if (spaceInfo.Code != 0 || spaceInfo.Data is null)
             {
                 logger.LogError("【获取直播间信息】失败");
                 logger.LogError("【原因】{message}", spaceInfo.Message);
-                return;
+                failed = true;
+                failureReason = spaceInfo.Message;
+                continue;
             }
 
             var successCount = 0;
@@ -470,23 +536,49 @@ public class LiveDomainService(
                 successCount,
                 successCount + failedCount
             );
+
+            if (successCount < _liveFansMedalTaskOptions.SendDanmakuNumber)
+            {
+                failed = true;
+                failureReason = "弹幕发送未达到目标次数";
+            }
+        }
+
+        return failed
+            ? TaskStepResult.Fail(failureReason ?? "粉丝牌弹幕发送失败")
+            : TaskStepResult.Success();
+    }
+
+    public async Task<TaskStepResult> SendHeartBeatToFansMedalLive(BiliCookie ck)
+    {
+        try
+        {
+            return await SendHeartBeatToFansMedalLiveCoreAsync(ck);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "发送粉丝牌心跳异常：{message}", exception.Message);
+            return TaskStepResult.Fail($"发送粉丝牌心跳异常：{exception.Message}");
         }
     }
 
-    public async Task SendHeartBeatToFansMedalLive(BiliCookie ck)
+    private async Task<TaskStepResult> SendHeartBeatToFansMedalLiveCoreAsync(BiliCookie ck)
     {
         if (!await CheckLiveCookie(ck))
-            return;
+            return TaskStepResult.Fail("直播 Cookie 不可用");
 
+        var infoResult = await GetFansMedalInfoList(ck);
         var infoList = new List<HeartBeatIterationInfoDto>();
-        (await GetFansMedalInfoList(ck))
-            .FindAll(info => info.LiveRoomInfo.Live_Status != 0)
+        infoResult
+            .Items.FindAll(info => info.LiveRoomInfo.Live_Status != 0)
             .ForEach(medal => infoList.Add(new(medal.RoomId, medal.LiveRoomInfo, new(), 0, 0)));
 
         if (infoList.Count == 0)
         {
             logger.LogInformation("【直播观看时长】跳过，未检测到符合条件的主播");
-            return;
+            return infoResult.HasFailure
+                ? TaskStepResult.Fail(infoResult.FailureReason!)
+                : TaskStepResult.Skip("没有正在直播的粉丝牌直播间");
         }
 
         var Now = () => new DateTimeOffset(DateTime.UtcNow).ToUnixTimeMilliseconds();
@@ -564,23 +656,24 @@ public class LiveDomainService(
 
                 info.LastBeatTime = Now();
 
-                if (heartBeatResult != null && heartBeatResult.Data != null)
-                {
-                    info.HeartBeatInfo.Secret_key = heartBeatResult.Data.Secret_key;
-                    info.HeartBeatInfo.Secret_rule = heartBeatResult.Data.Secret_rule;
-                    info.HeartBeatInfo.Timestamp = heartBeatResult.Data.Timestamp;
-                }
-
-                if (heartBeatResult == null || heartBeatResult.Code != 0)
+                if (
+                    heartBeatResult is null
+                    || heartBeatResult.Code != 0
+                    || heartBeatResult.Data is null
+                )
                 {
                     logger.LogError("【心跳包】直播间 {room} 发送失败", info.RoomId);
                     logger.LogError(
                         "【原因】{message}",
-                        heartBeatResult != null ? heartBeatResult.Message : ""
+                        heartBeatResult?.Message ?? heartBeatResult?.Code.ToString() ?? "无响应"
                     );
                     info.FailedTimes += 1;
                     continue;
                 }
+
+                info.HeartBeatInfo.Secret_key = heartBeatResult.Data.Secret_key;
+                info.HeartBeatInfo.Secret_rule = heartBeatResult.Data.Secret_rule;
+                info.HeartBeatInfo.Timestamp = heartBeatResult.Data.Timestamp;
 
                 info.HeartBeatCount += 1;
                 info.FailedTimes = 0;
@@ -601,19 +694,46 @@ public class LiveDomainService(
             successCount,
             infoList.Count
         );
+
+        return !infoResult.HasFailure && successCount == infoList.Count
+            ? TaskStepResult.Success()
+            : TaskStepResult.Fail(infoResult.FailureReason ?? "直播心跳未完成目标");
     }
 
     /// <summary>
     /// 点赞直播间
     /// </summary>
-    public async Task LikeFansMedalLive(BiliCookie ck)
+    public async Task<TaskStepResult> LikeFansMedalLive(BiliCookie ck)
+    {
+        try
+        {
+            return await LikeFansMedalLiveCoreAsync(ck);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "点赞粉丝牌直播间异常：{message}", exception.Message);
+            return TaskStepResult.Fail($"点赞粉丝牌直播间异常：{exception.Message}");
+        }
+    }
+
+    private async Task<TaskStepResult> LikeFansMedalLiveCoreAsync(BiliCookie ck)
     {
         if (!await CheckLiveCookie(ck))
-            return;
+            return TaskStepResult.Fail("直播 Cookie 不可用");
 
-        var infoList = await GetFansMedalInfoList(ck);
+        var infoResult = await GetFansMedalInfoList(ck);
+        var infoList = infoResult.Items;
         infoList = infoList.FindAll(info => info.LiveRoomInfo.Live_Status != 0);
         logger.LogInformation("当前开播直播间数量：{num}", infoList.Count);
+        if (infoList.Count == 0)
+        {
+            return infoResult.HasFailure
+                ? TaskStepResult.Fail(infoResult.FailureReason!)
+                : TaskStepResult.Skip("没有正在直播的粉丝牌直播间");
+        }
+
+        var failed = infoResult.HasFailure;
+        string? failureReason = infoResult.FailureReason;
         foreach (var info in infoList)
         {
             // Clike_Time 暂时设置为等于设置的LikeNumber，不清楚是否会被风控，我自己抓包最大值为10
@@ -634,26 +754,33 @@ public class LiveDomainService(
             {
                 logger.LogError("【点赞直播间】{roomId} 时候出现错误", info.RoomId);
                 logger.LogError("【原因】{message}", result.Message);
+                failed = true;
+                failureReason = result.Message;
             }
 
             var delay = new Random().Next(5000, 8000);
             await Task.Delay(delay);
         }
+
+        return failed
+            ? TaskStepResult.Fail(failureReason ?? "点赞直播间失败")
+            : TaskStepResult.Success();
     }
 
-    private async Task<List<FansMedalInfoDto>> GetFansMedalInfoList(BiliCookie ck)
+    private async Task<FansMedalInfoListResult> GetFansMedalInfoList(BiliCookie ck)
     {
         logger.LogInformation("【获取直播列表】获取拥有粉丝牌的直播列表");
         var medalWallInfo = await liveApi.GetMedalWall(ck.UserId, ck.ToString());
 
-        if (medalWallInfo.Code != 0)
+        if (medalWallInfo.Code != 0 || medalWallInfo.Data is null)
         {
             logger.LogError("【获取直播列表】失败");
             logger.LogError("【原因】{message}", medalWallInfo.Message);
-            return new List<FansMedalInfoDto>();
+            throw new InvalidOperationException($"获取直播列表失败：{medalWallInfo.Message}");
         }
 
         var infoList = new List<FansMedalInfoDto>();
+        string? failureReason = null;
         foreach (var medal in medalWallInfo.Data.List)
         {
             logger.LogInformation("【主播】{name} ", medal.Target_name);
@@ -671,10 +798,12 @@ public class LiveDomainService(
             var req = new GetSpaceInfoDto() { mid = liveHostUserId };
 
             var spaceInfo = await upInfoApi.GetSpaceInfo(req, ck.ToString());
-            if (spaceInfo.Code != 0)
+            if (spaceInfo.Code != 0 || spaceInfo.Data is null)
             {
                 logger.LogError("【获取空间信息】失败");
                 logger.LogError("【原因】{message}", spaceInfo.Message);
+                failureReason ??=
+                    $"获取空间信息失败：{spaceInfo.Message ?? spaceInfo.Code.ToString()}";
                 continue;
             }
 
@@ -689,17 +818,27 @@ public class LiveDomainService(
 
             // 获取直播间详细信息
             var liveRoomInfo = await liveApi.GetLiveRoomInfo(roomId);
-            if (liveRoomInfo.Code != 0)
+            if (liveRoomInfo.Code != 0 || liveRoomInfo.Data is null)
             {
                 logger.LogError("【获取直播间信息】失败");
                 logger.LogError("【原因】{message}", liveRoomInfo.Message);
+                failureReason ??=
+                    $"获取直播间信息失败：{liveRoomInfo.Message ?? liveRoomInfo.Code.ToString()}";
                 continue;
             }
 
-            infoList.Add(new FansMedalInfoDto(roomId, medal, liveRoomInfo.Data!));
+            infoList.Add(new FansMedalInfoDto(roomId, medal, liveRoomInfo.Data));
         }
 
-        return infoList;
+        return new FansMedalInfoListResult(infoList, failureReason);
+    }
+
+    private sealed record FansMedalInfoListResult(
+        List<FansMedalInfoDto> Items,
+        string? FailureReason
+    )
+    {
+        public bool HasFailure => !string.IsNullOrWhiteSpace(FailureReason);
     }
 
     /// <summary>

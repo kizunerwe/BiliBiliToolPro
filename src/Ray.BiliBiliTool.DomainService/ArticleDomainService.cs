@@ -5,6 +5,7 @@ using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.Article;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Interfaces;
 using Ray.BiliBiliTool.Config.Options;
+using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 
 namespace Ray.BiliBiliTool.DomainService;
@@ -38,40 +39,46 @@ public class ArticleDomainService(
     /// 投币专栏任务
     /// </summary>
     /// <returns></returns>
-    public async Task<bool> AddCoinForArticles(BiliCookie ck)
+    public async Task<TaskStepResult> AddCoinForArticles(BiliCookie ck)
     {
-        var donateCoinsCounts = await CalculateDonateCoinsCounts(ck);
-
-        if (donateCoinsCounts == 0)
+        try
         {
-            // 没有可投的币相当于投币任务全部完成
-            return true;
-        }
+            var donateCoinsCounts = await CalculateDonateCoinsCounts(ck);
 
-        int success = 0;
-        int tryCount = 10;
+            if (donateCoinsCounts == 0)
+                return TaskStepResult.Skip("没有需要投币的专栏");
 
-        for (int i = 0; i <= tryCount && success < donateCoinsCounts; i++)
-        {
-            logger.LogDebug("开始尝试第{num}次", i);
+            int success = 0;
+            int tryCount = 10;
+            var requestFailed = false;
+            string? failureReason = null;
 
-            var upId = GetUpFromConfigUps(ck);
-            if (upId == 0)
+            for (int i = 0; i <= tryCount && success < donateCoinsCounts; i++)
             {
-                logger.LogDebug("未能成功选择支持的Up主");
-                continue;
-            }
-            // 当upId不符合时，会直接报错，需要将两者的判断分隔开
-            var cvid = await GetRandomArticleFromUp(upId, ck);
-            if (cvid == 0)
-            {
-                logger.LogDebug("第{num}次尝试，未能成功选择合适的专栏", i);
-                continue;
-            }
+                logger.LogDebug("开始尝试第{num}次", i);
 
-            if (await AddCoinForArticle(cvid, upId, ck))
-            {
-                // 点赞
+                var upId = GetUpFromConfigUps(ck);
+                if (upId == 0)
+                {
+                    logger.LogDebug("未能成功选择支持的Up主");
+                    continue;
+                }
+
+                var cvid = await GetRandomArticleFromUp(upId, ck);
+                if (cvid == 0)
+                {
+                    logger.LogDebug("第{num}次尝试，未能成功选择合适的专栏", i);
+                    continue;
+                }
+
+                var coinResult = await AddCoinForArticleResultAsync(cvid, upId, ck);
+                if (coinResult.Status == TaskStepStatus.Failed)
+                {
+                    requestFailed = true;
+                    failureReason = coinResult.Reason;
+                    continue;
+                }
+
                 if (_dailyTaskOptions.SelectLike)
                 {
                     await LikeArticle(cvid, ck);
@@ -80,22 +87,57 @@ public class ArticleDomainService(
 
                 success++;
             }
-        }
 
-        if (success == donateCoinsCounts)
-            logger.LogInformation("专栏投币任务完成");
-        else
-        {
+            if (success == donateCoinsCounts)
+            {
+                logger.LogInformation("专栏投币任务完成");
+                logger.LogInformation(
+                    "【硬币余额】{coin}",
+                    (await accountApi.GetCoinBalanceAsync(ck.ToString())).Data?.Money ?? 0
+                );
+                return TaskStepResult.Success();
+            }
+
             logger.LogInformation("投币尝试超过10次，已终止");
-            return false;
+            return requestFailed
+                ? TaskStepResult.Fail(failureReason ?? "专栏投币请求失败")
+                : TaskStepResult.Skip("没有找到可投的专栏");
         }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "专栏投币异常：{message}", exception.Message);
+            return TaskStepResult.Fail($"专栏投币异常：{exception.Message}");
+        }
+    }
 
-        logger.LogInformation(
-            "【硬币余额】{coin}",
-            (await accountApi.GetCoinBalanceAsync(ck.ToString())).Data!.Money ?? 0
-        );
+    private async Task<TaskStepResult> AddCoinForArticleResultAsync(
+        long cvid,
+        long mid,
+        BiliCookie ck
+    )
+    {
+        try
+        {
+            var refer =
+                $"https://www.bilibili.com/read/cv{cvid}/?from=search&spm_id_from=333.337.0.0";
+            var result = await articleApi.AddCoinForArticleAsync(
+                new AddCoinForArticleRequest(cvid, mid, ck.BiliJct),
+                ck.ToString(),
+                refer
+            );
+            if (result.Code == 0)
+            {
+                logger.LogInformation("投币成功，经验+10 √");
+                return TaskStepResult.Success();
+            }
 
-        return true;
+            logger.LogError("投币错误 {message}", result.Message);
+            return TaskStepResult.Fail($"专栏投币被接口拒绝：{result.Message}");
+        }
+        catch (Exception exception)
+        {
+            return TaskStepResult.Fail($"专栏投币请求异常：{exception.Message}");
+        }
     }
 
     /// <summary>
@@ -106,32 +148,8 @@ public class ArticleDomainService(
     /// <returns>投币是否成功（false 投币失败，true 投币成功）</returns>
     public async Task<bool> AddCoinForArticle(long cvid, long mid, BiliCookie ck)
     {
-        BiliApiResponse result;
-        try
-        {
-            var refer =
-                $"https://www.bilibili.com/read/cv{cvid}/?from=search&spm_id_from=333.337.0.0";
-            result = await articleApi.AddCoinForArticleAsync(
-                new AddCoinForArticleRequest(cvid, mid, ck.BiliJct),
-                ck.ToString(),
-                refer
-            );
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-
-        if (result.Code == 0)
-        {
-            logger.LogInformation("投币成功，经验+10 √");
-            return true;
-        }
-        else
-        {
-            logger.LogError("投币错误 {message}", result.Message);
-            return false;
-        }
+        var result = await AddCoinForArticleResultAsync(cvid, mid, ck);
+        return result.Status == TaskStepStatus.Succeeded;
     }
 
     #region private
@@ -171,6 +189,8 @@ public class ArticleDomainService(
             throw new Exception(re.Message);
         }
 
+        if (re.Data is null)
+            throw new InvalidOperationException($"获取专栏列表失败：{re.Message}");
         var articleInfo = re.Data.Articles.FirstOrDefault();
 
         logger.LogInformation("获取到的专栏{cvid}({title})", articleInfo?.Id, articleInfo?.Title);
@@ -244,6 +264,8 @@ public class ArticleDomainService(
             throw new Exception(re.Message);
         }
 
+        if (re.Data is null)
+            throw new InvalidOperationException($"获取专栏数量失败：{re.Message}");
         return re.Data.Count;
     }
 
@@ -346,7 +368,14 @@ public class ArticleDomainService(
 
             if (!_alreadyDonatedCoinCountCatch.TryGetValue(cvid.ToString(), out int multiply))
             {
-                multiply = (await articleApi.SearchArticleInfoAsync(cvid)).Data.Coin;
+                var articleInfo = await articleApi.SearchArticleInfoAsync(cvid);
+                if (articleInfo.Code != 0 || articleInfo.Data is null)
+                {
+                    throw new InvalidOperationException(
+                        $"获取专栏投币状态失败：{articleInfo.Message ?? articleInfo.Code.ToString()}"
+                    );
+                }
+                multiply = articleInfo.Data.Coin;
                 _alreadyDonatedCoinCountCatch.TryAdd(cvid.ToString(), multiply);
             }
 
@@ -360,8 +389,8 @@ public class ArticleDomainService(
         }
         catch (Exception e)
         {
-            logger.LogWarning("异常：{mag}", e);
-            return false;
+            logger.LogError(e, "获取专栏投币状态异常：{message}", e.Message);
+            throw;
         }
     }
 

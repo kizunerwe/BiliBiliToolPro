@@ -46,6 +46,8 @@ public class Program
     {
         IHost host = CreateHostBuilder(args).UseConsoleLifetime().Build();
         Global.ServiceProviderRoot = host.Services;
+        Global.ConfigurationRoot =
+            host.Services.GetRequiredService<IConfiguration>() as IConfigurationRoot;
         return host;
     }
 

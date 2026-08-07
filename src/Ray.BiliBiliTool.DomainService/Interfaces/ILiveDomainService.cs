@@ -1,5 +1,6 @@
 ﻿using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.Live;
+using Ray.BiliBiliTool.DomainService.Dtos;
 
 namespace Ray.BiliBiliTool.DomainService.Interfaces;
 
@@ -31,15 +32,15 @@ public interface ILiveDomainService : IDomainService
     /// <summary>
     /// 发送弹幕
     /// </summary>
-    Task SendDanmakuToFansMedalLive(BiliCookie ck);
+    Task<TaskStepResult> SendDanmakuToFansMedalLive(BiliCookie ck);
 
     /// <summary>
     /// 直播时长挂机
     /// </summary>
-    Task SendHeartBeatToFansMedalLive(BiliCookie ck);
+    Task<TaskStepResult> SendHeartBeatToFansMedalLive(BiliCookie ck);
 
     /// <summary>
     /// 点赞直播间
     /// </summary>
-    Task LikeFansMedalLive(BiliCookie ck);
+    Task<TaskStepResult> LikeFansMedalLive(BiliCookie ck);
 }

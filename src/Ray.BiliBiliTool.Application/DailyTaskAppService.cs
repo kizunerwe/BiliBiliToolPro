@@ -6,6 +6,7 @@ using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Application.Attributes;
 using Ray.BiliBiliTool.Application.Contracts;
 using Ray.BiliBiliTool.Config.Options;
+using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 using Ray.BiliBiliTool.Infrastructure.Cookie;
 using Ray.BiliBiliTool.Infrastructure.Enums;
@@ -26,7 +27,6 @@ public class DailyTaskAppService(
 ) : BaseMultiAccountsAppService(logger, cookieStrFactory), IDailyTaskAppService
 {
     private readonly DailyTaskOptions _dailyTaskOptions = dailyTaskOptions.CurrentValue;
-    private readonly Dictionary<string, int> _expDic = Config.Constants.ExpDic;
 
     [TaskInterceptor("每日任务", TaskLevel.One)]
     protected override async Task DoTaskAccountAsync(
@@ -42,15 +42,69 @@ public class DailyTaskAppService(
 
         await SetCookiesAsync(ck, cancellationToken);
 
-        //每日任务赚经验：
-        UserInfo userInfo = await Login(ck);
+        UserInfo userInfo = await accountDomainService.LoginByCookie(ck);
+        var steps = new TaskStepAccumulator();
 
-        DailyTaskInfo dailyTaskInfo = await GetDailyTaskStatus(ck);
-        await WatchAndShareVideo(dailyTaskInfo, ck);
+        var status = await steps.RunValueAsync(
+            "获取每日任务状态",
+            () => accountDomainService.GetDailyTaskStatus(ck)
+        );
+        if (status.Succeeded && status.Value is not null)
+        {
+            await steps.RunAsync(
+                "观看、分享视频",
+                () => videoDomainService.WatchAndShareVideo(status.Value, ck)
+            );
+        }
+        else
+        {
+            steps.Add(
+                "观看、分享视频",
+                TaskStepResult.Fail("每日任务状态查询失败，无法执行观看分享")
+            );
+        }
 
-        await AddCoins(userInfo, ck);
+        if (_dailyTaskOptions.SaveCoinsWhenLv6 && userInfo.Level_info?.Current_level >= 6)
+        {
+            steps.Add("投币", TaskStepResult.Skip("当前账号已达到 LV6"));
+        }
+        else if (_dailyTaskOptions.IsDonateCoinForArticle)
+        {
+            logger.LogInformation("专栏投币已开启");
+            var articleResult = await steps.RunResultAsync(
+                "专栏投币",
+                () => articleDomainService.AddCoinForArticles(ck)
+            );
+            if (articleResult.Status != TaskStepStatus.Succeeded)
+            {
+                await steps.RunAsync(
+                    "视频投币",
+                    () => donateCoinDomainService.AddCoinsForVideos(ck)
+                );
+            }
+        }
+        else
+        {
+            await steps.RunAsync("视频投币", () => donateCoinDomainService.AddCoinsForVideos(ck));
+        }
 
-        await ReceiveVipPrivilege(userInfo, ck);
+        var vipResult = await steps.RunResultAsync(
+            "领取大会员福利",
+            () => vipPrivilegeDomainService.ReceiveVipPrivilege(userInfo, ck)
+        );
+        if (vipResult.Status == TaskStepStatus.Succeeded)
+        {
+            try
+            {
+                await accountDomainService.LoginByCookie(ck);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError("领取福利成功，但之后刷新用户信息时异常，信息：{msg}", ex.Message);
+            }
+        }
+
+        steps.ThrowIfFailed("每日任务");
     }
 
     [TaskInterceptor("Set Cookie")]
@@ -70,96 +124,6 @@ public class DailyTaskAppService(
         //持久化
         logger.LogInformation("持久化Cookie");
         await SaveCookieAsync(ck, cancellationToken);
-    }
-
-    /// <summary>
-    /// 登录
-    /// </summary>
-    /// <returns></returns>
-    [TaskInterceptor("登录")]
-    private async Task<UserInfo> Login(BiliCookie ck)
-    {
-        UserInfo userInfo = await accountDomainService.LoginByCookie(ck);
-
-        _expDic.TryGetValue("每日登录", out int exp);
-        logger.LogInformation("登录成功，经验+{exp} √", exp);
-
-        return userInfo;
-    }
-
-    /// <summary>
-    /// 获取任务完成情况
-    /// </summary>
-    /// <returns></returns>
-    [TaskInterceptor(rethrowWhenException: false)]
-    private async Task<DailyTaskInfo> GetDailyTaskStatus(BiliCookie ck)
-    {
-        return await accountDomainService.GetDailyTaskStatus(ck);
-    }
-
-    /// <summary>
-    /// 观看、分享视频
-    /// </summary>
-    [TaskInterceptor("观看、分享视频", rethrowWhenException: false)]
-    private async Task WatchAndShareVideo(DailyTaskInfo dailyTaskInfo, BiliCookie ck)
-    {
-        if (!_dailyTaskOptions.IsWatchVideo && !_dailyTaskOptions.IsShareVideo)
-        {
-            logger.LogInformation("已配置为关闭，跳过任务");
-            return;
-        }
-
-        await videoDomainService.WatchAndShareVideo(dailyTaskInfo, ck);
-    }
-
-    /// <summary>
-    /// 投币任务
-    /// </summary>
-    [TaskInterceptor("投币", rethrowWhenException: false)]
-    private async Task AddCoins(UserInfo userInfo, BiliCookie ck)
-    {
-        if (_dailyTaskOptions.SaveCoinsWhenLv6 && userInfo.Level_info?.Current_level >= 6)
-        {
-            logger.LogInformation("已经为LV6大佬，开始白嫖");
-            return;
-        }
-
-        if (_dailyTaskOptions.IsDonateCoinForArticle)
-        {
-            logger.LogInformation("专栏投币已开启");
-
-            if (!await articleDomainService.AddCoinForArticles(ck))
-            {
-                logger.LogInformation("专栏投币结束，转入视频投币");
-                await donateCoinDomainService.AddCoinsForVideos(ck);
-            }
-        }
-        else
-        {
-            await donateCoinDomainService.AddCoinsForVideos(ck);
-        }
-    }
-
-    /// <summary>
-    /// 每月领取大会员福利
-    /// </summary>
-    [TaskInterceptor("领取大会员福利", rethrowWhenException: false)]
-    private async Task ReceiveVipPrivilege(UserInfo userInfo, BiliCookie ck)
-    {
-        var suc = await vipPrivilegeDomainService.ReceiveVipPrivilege(userInfo, ck);
-
-        //如果领取成功，需要刷新账户信息（比如B币余额）
-        if (suc)
-        {
-            try
-            {
-                await accountDomainService.LoginByCookie(ck);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError("领取福利成功，但之后刷新用户信息时异常，信息：{msg}", ex.Message);
-            }
-        }
     }
 
     private async Task SaveCookieAsync(BiliCookie ckInfo, CancellationToken cancellationToken)

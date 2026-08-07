@@ -35,7 +35,9 @@ public class VideoDomainService(
     public async Task<VideoDetail> GetVideoDetail(string aid)
     {
         var re = await videoWithoutCookieApi.GetVideoDetail(aid);
-        return re.Data!;
+        if (re.Code != 0 || re.Data is null)
+            throw new InvalidOperationException($"获取视频详情失败：{re.Message}");
+        return re.Data;
     }
 
     public async Task<bool> WatchVideoForUpFriendlyMode(
@@ -112,6 +114,8 @@ public class VideoDomainService(
         {
             var apiResponse = await videoWithoutCookieApi.GetRegionRankingVideosV2();
             logger.LogDebug("获取排行榜成功");
+            if (apiResponse.Code != 0 || apiResponse.Data?.List is null)
+                throw new InvalidOperationException($"获取排行榜失败：{apiResponse.Message}");
             return apiResponse.Data.List;
         });
 
@@ -178,50 +182,141 @@ public class VideoDomainService(
             throw new Exception(re.Message);
         }
 
-        return re.Data!.Page.Count;
+        if (re.Data is null)
+            throw new InvalidOperationException($"获取UP视频数量失败：{re.Message}");
+        return re.Data.Page.Count;
     }
 
-    public async Task WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck)
+    public async Task<TaskStepResult> WatchAndShareVideo(
+        DailyTaskInfo dailyTaskStatus,
+        BiliCookie ck
+    )
     {
-        VideoInfoDto? targetVideo = null;
-
-        //至少有一项未完成，获取视频
-        if (!dailyTaskStatus.Watch || !dailyTaskStatus.Share)
+        if (_dailyTaskOptions.IsWatchVideo == false && _dailyTaskOptions.IsShareVideo == false)
         {
-            targetVideo = await GetRandomVideoForWatchAndShare(ck);
+            return TaskStepResult.Skip("观看和分享均已关闭");
+        }
+
+        if (dailyTaskStatus.Watch && dailyTaskStatus.Share)
+        {
+            return TaskStepResult.Skip("今日观看和分享任务均已完成");
+        }
+
+        try
+        {
+            var targetVideo = await GetRandomVideoForWatchAndShare(ck);
+            if (targetVideo == null)
+                return TaskStepResult.Fail("未找到可用视频");
+
             logger.LogInformation("【随机视频】{title}", targetVideo.Title);
-        }
-
-        bool watched = false;
-        //观看
-        if (!dailyTaskStatus.Watch && _dailyTaskOptions.IsWatchVideo)
-        {
-            await WatchVideo(targetVideo!, ck);
-            watched = true;
-        }
-        else
-            logger.LogInformation("今天已经观看过了，不需要再看啦");
-
-        //分享
-        if (!dailyTaskStatus.Share && _dailyTaskOptions.IsShareVideo)
-        {
-            //如果没有打开观看过，则分享前先打开视频
-            if (!watched)
+            var watched = false;
+            var watchRequested = !dailyTaskStatus.Watch && _dailyTaskOptions.IsWatchVideo;
+            var failed = false;
+            string? failureReason = null;
+            if (watchRequested)
             {
-                try
+                watched = await WatchVideoForTaskAsync(targetVideo, ck);
+                if (!watched)
                 {
-                    await OpenVideo(targetVideo!, ck);
-                }
-                catch (Exception e)
-                {
-                    //ignore
-                    logger.LogError("打开视频异常：{msg}", e.Message);
+                    failed = true;
+                    failureReason = "视频播放被接口拒绝";
                 }
             }
-            await ShareVideo(targetVideo!, ck);
+
+            if (!dailyTaskStatus.Watch || !_dailyTaskOptions.IsWatchVideo)
+                logger.LogInformation("今天已经观看过了，不需要再看啦");
+
+            if (!dailyTaskStatus.Share && _dailyTaskOptions.IsShareVideo)
+            {
+                if (!watched && !await OpenVideo(targetVideo, ck))
+                    return TaskStepResult.Fail("打开视频失败，无法分享");
+
+                if (!await ShareVideoForTaskAsync(targetVideo, ck))
+                    return TaskStepResult.Fail("视频分享被接口拒绝");
+            }
+            else
+            {
+                logger.LogInformation("今天已经分享过了，不用再分享啦");
+            }
+
+            return failed
+                ? TaskStepResult.Fail(failureReason ?? "观看、分享视频失败")
+                : TaskStepResult.Success();
         }
-        else
-            logger.LogInformation("今天已经分享过了，不用再分享啦");
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "观看、分享视频异常：{message}", exception.Message);
+            return TaskStepResult.Fail($"观看、分享视频异常：{exception.Message}");
+        }
+    }
+
+    private async Task<bool> WatchVideoForTaskAsync(VideoInfoDto videoInfo, BiliCookie ck)
+    {
+        if (_dailyTaskOptions.IsUpFriendlyMode)
+        {
+            var detail = await GetVideoDetailForPlaybackSession(videoInfo);
+            var succeeded = await WatchVideoForUpFriendlyMode(detail, ck, CancellationToken.None);
+            if (succeeded)
+            {
+                _expDic.TryGetValue("每日观看视频", out int exp);
+                logger.LogInformation(
+                    "视频播放成功，已观看到第{playedTime}秒，经验+{exp} √",
+                    GetPlannedWatchSeconds(detail.Duration),
+                    exp
+                );
+            }
+
+            return succeeded;
+        }
+
+        if (!await OpenVideo(videoInfo, ck))
+            return false;
+
+        videoInfo.Duration = videoInfo.Duration ?? 15;
+        int max = videoInfo.Duration < 15 ? videoInfo.Duration.Value : 15;
+        int playedTime = new Random().Next(1, Math.Max(2, max));
+        var request = new UploadVideoHeartbeatRequest
+        {
+            Aid = long.Parse(videoInfo.Aid),
+            Bvid = videoInfo.Bvid,
+            Cid = videoInfo.Cid,
+            Mid = long.Parse(ck.UserId),
+            Csrf = ck.BiliJct,
+            Played_time = playedTime,
+            Realtime = playedTime,
+            Real_played_time = playedTime,
+        };
+        var response = await videoApi.UploadVideoHeartbeat(request, ck.ToString());
+        if (response.Code != 0)
+        {
+            logger.LogError("视频播放失败，原因：{msg}", response.Message);
+            return false;
+        }
+
+        _expDic.TryGetValue("每日观看视频", out int expValue);
+        logger.LogInformation(
+            "视频播放成功，已观看到第{playedTime}秒，经验+{exp} √",
+            playedTime,
+            expValue
+        );
+        return true;
+    }
+
+    private async Task<bool> ShareVideoForTaskAsync(VideoInfoDto videoInfo, BiliCookie ck)
+    {
+        var response = await videoApi.ShareVideo(
+            new ShareVideoRequest(long.Parse(videoInfo.Aid), ck.BiliJct),
+            ck.ToString()
+        );
+        if (response.Code != 0)
+        {
+            logger.LogError("视频分享失败，原因: {msg}", response.Message);
+            return false;
+        }
+
+        _expDic.TryGetValue("每日观看视频", out int exp);
+        logger.LogInformation("视频分享成功，经验+{exp} √", exp);
+        return true;
     }
 
     /// <summary>
@@ -405,7 +500,14 @@ public class VideoDomainService(
             request,
             ck.ToString()
         );
-        if (result.Data.Total > 0)
+        if (result.Code != 0 || result.Data is null)
+        {
+            throw new InvalidOperationException(
+                $"获取关注列表失败：{result.Message ?? result.Code.ToString()}"
+            );
+        }
+
+        if (result.Data?.Total > 0)
         {
             var video = await GetRandomVideoOfUps(result.Data.List.Select(x => x.Mid).ToList(), ck);
             if (video != null)

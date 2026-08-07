@@ -4,6 +4,7 @@ using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Interfaces;
 using Ray.BiliBiliTool.Config.Options;
+using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 
 namespace Ray.BiliBiliTool.DomainService;
@@ -25,12 +26,12 @@ public class VipPrivilegeDomainService(
     /// </summary>
     /// <param name="userInfo"></param>
     /// <param name="ck"></param>
-    public async Task<bool> ReceiveVipPrivilege(UserInfo userInfo, BiliCookie ck)
+    public async Task<TaskStepResult> ReceiveVipPrivilege(UserInfo userInfo, BiliCookie ck)
     {
         if (!_vipPrivilegeOptions.IsEnable)
         {
             logger.LogInformation("已配置为关闭，跳过");
-            return false;
+            return TaskStepResult.Skip("大会员福利已关闭");
         }
 
         //大会员类型
@@ -38,7 +39,7 @@ public class VipPrivilegeDomainService(
         if (vipType != VipType.Annual)
         {
             logger.LogInformation("普通会员和月度大会员每月不赠送B币券，不需要领取权益喽");
-            return false;
+            return TaskStepResult.Skip("当前账号不是年度大会员");
         }
 
         /*
@@ -57,12 +58,30 @@ public class VipPrivilegeDomainService(
         }
         */
 
-        var suc1 = await ReceiveVipPrivilege(VipPrivilegeType.BCoinCoupon, ck);
-        var suc2 = await ReceiveVipPrivilege(VipPrivilegeType.MembershipBenefits, ck);
+        try
+        {
+            var coupon = await ReceiveVipPrivilege(VipPrivilegeType.BCoinCoupon, ck);
+            var benefits = await ReceiveVipPrivilege(VipPrivilegeType.MembershipBenefits, ck);
 
-        if (suc1 | suc2)
-            return true;
-        return false;
+            if (coupon.Status == TaskStepStatus.Failed || benefits.Status == TaskStepStatus.Failed)
+            {
+                return TaskStepResult.Fail(
+                    coupon.Status == TaskStepStatus.Failed ? coupon.Reason! : benefits.Reason!
+                );
+            }
+
+            if (
+                coupon.Status == TaskStepStatus.Skipped
+                && benefits.Status == TaskStepStatus.Skipped
+            )
+                return TaskStepResult.Skip("本月大会员福利已领取");
+
+            return TaskStepResult.Success();
+        }
+        catch (Exception exception)
+        {
+            return TaskStepResult.Fail($"领取大会员福利异常：{exception.Message}");
+        }
     }
 
     #region private
@@ -72,7 +91,7 @@ public class VipPrivilegeDomainService(
     /// </summary>
     /// <param name="type">1.大会员B币券；2.大会员福利</param>
     /// <param name="ck"></param>
-    private async Task<bool> ReceiveVipPrivilege(VipPrivilegeType type, BiliCookie ck)
+    private async Task<TaskStepResult> ReceiveVipPrivilege(VipPrivilegeType type, BiliCookie ck)
     {
         var response = await dailyTaskApi.ReceiveVipPrivilegeAsync(
             (int)type,
@@ -86,14 +105,17 @@ public class VipPrivilegeDomainService(
         if (response.Code == 0)
         {
             logger.LogInformation("【结果】成功");
-            return true;
+            return TaskStepResult.Success();
         }
-        else
+        if (response.Code == 69801)
         {
-            logger.LogInformation("【结果】失败");
-            logger.LogInformation("【原因】 {msg}", response.Message);
-            return false;
+            logger.LogInformation("【结果】本月已领取");
+            return TaskStepResult.Skip("本月已领取");
         }
+
+        logger.LogInformation("【结果】失败");
+        logger.LogInformation("【原因】 {msg}", response.Message);
+        return TaskStepResult.Fail($"{GetPrivilegeName(type)}领取被拒绝：{response.Message}");
     }
 
     /// <summary>

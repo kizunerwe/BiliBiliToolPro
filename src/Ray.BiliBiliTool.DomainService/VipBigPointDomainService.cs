@@ -32,7 +32,7 @@ public class VipBigPointDomainService(
             new GetCombineRequest { csrf = ck.BiliJct, buvid = ck.Buvid },
             ck.ToString()
         );
-        if (allTasks.Code != 0)
+        if (allTasks.Code != 0 || allTasks.Data is null)
             throw new Exception(allTasks.ToJsonStr());
         return allTasks.Data;
     }
@@ -40,47 +40,54 @@ public class VipBigPointDomainService(
     public async Task VipExpressAsync(BiliCookie ck)
     {
         var re = await vipApi.GetVouchersInfoAsync(ck.ToString());
-        if (re.Code == 0)
+        if (re.Code != 0 || re.Data is null)
+            throw new InvalidOperationException($"获取大会员经验任务失败：{re.Message}");
+
+        var state = re.Data.List.Find(x => x.Type == 9)?.State;
+
+        switch (state)
         {
-            var state = re.Data.List.Find(x => x.Type == 9)?.State;
-
-            switch (state)
-            {
-                case 2:
-                    logger.LogInformation("大会员经验观看任务未完成");
-                    logger.LogInformation("开始观看视频");
-                    DailyTaskInfo dailyTaskInfo = await accountDomainService.GetDailyTaskStatus(ck);
-                    await videoDomainService.WatchAndShareVideo(dailyTaskInfo, ck);
-                    goto case 0;
-
-                case 1:
-                    logger.LogInformation("大会员经验已兑换");
-                    break;
-
-                case 0:
-                    logger.LogInformation("大会员经验未兑换");
-                    var response = await vipApi.ObtainVipExperienceAsync(
-                        new VipExperienceRequest { csrf = ck.BiliJct },
-                        ck.ToString()
+            case 2:
+                logger.LogInformation("大会员经验观看任务未完成");
+                logger.LogInformation("开始观看视频");
+                DailyTaskInfo dailyTaskInfo = await accountDomainService.GetDailyTaskStatus(ck);
+                var watchResult = await videoDomainService.WatchAndShareVideo(dailyTaskInfo, ck);
+                if (watchResult.Status == TaskStepStatus.Failed)
+                {
+                    throw new InvalidOperationException(
+                        $"观看、分享视频失败：{watchResult.Reason}"
                     );
-                    if (response.Code != 0)
-                    {
-                        logger.LogInformation(
-                            "大会员经验领取失败，错误信息：{message}",
-                            response.Message
-                        );
-                        break;
-                    }
+                }
 
-                    logger.LogInformation("领取成功，经验+10 √");
-                    var combine = await GetCombineAsync(ck);
-                    combine.LogPointInfo(logger);
-                    break;
+                goto case 0;
 
-                default:
-                    logger.LogDebug("大会员经验领取失败，未知错误");
+            case 1:
+                logger.LogInformation("大会员经验已兑换");
+                break;
+
+            case 0:
+                logger.LogInformation("大会员经验未兑换");
+                var response = await vipApi.ObtainVipExperienceAsync(
+                    new VipExperienceRequest { csrf = ck.BiliJct },
+                    ck.ToString()
+                );
+                if (response.Code != 0)
+                {
+                    logger.LogInformation(
+                        "大会员经验领取失败，错误信息：{message}",
+                        response.Message
+                    );
                     break;
-            }
+                }
+
+                logger.LogInformation("领取成功，经验+10 √");
+                var combine = await GetCombineAsync(ck);
+                combine.LogPointInfo(logger);
+                break;
+
+            default:
+                logger.LogDebug("大会员经验领取失败，未知错误");
+                break;
         }
     }
 
@@ -90,6 +97,8 @@ public class VipBigPointDomainService(
             new ThreeDaySignRequest { csrf = ck.BiliJct },
             ck.ToString()
         );
+        if (signInfo.Code != 0 || signInfo.Data is null)
+            throw new InvalidOperationException($"获取签到状态失败：{signInfo.Message}");
         if (signInfo.Data.three_day_sign.signed)
         {
             logger.LogInformation("已完成，跳过");
@@ -106,12 +115,15 @@ public class VipBigPointDomainService(
             throw new Exception(re.ToJsonStr());
 
         logger.LogInformation("签到成功");
-        logger.LogInformation(re.Data.ToString());
+        if (re.Data is not null)
+            logger.LogInformation(re.Data.ToString());
 
         signInfo = await vipApi.GetThreeDaySignAsync(
             new ThreeDaySignRequest { csrf = ck.BiliJct },
             ck.ToString()
         );
+        if (signInfo.Code != 0 || signInfo.Data is null)
+            throw new InvalidOperationException($"刷新签到状态失败：{signInfo.Message}");
         signInfo.Data.LogPointInfo(logger);
     }
 

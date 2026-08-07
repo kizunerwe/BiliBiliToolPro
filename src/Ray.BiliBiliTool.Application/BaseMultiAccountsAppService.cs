@@ -16,7 +16,7 @@ public abstract class BaseMultiAccountsAppService(
             "【账号个数】{count}个" + Environment.NewLine,
             cookieStrFactory.Count
         );
-        var failedAccounts = new List<int>();
+        var failedAccounts = new List<(int Index, Exception Exception)>();
         for (int i = 0; i < cookieStrFactory.Count; i++)
         {
             logger.LogInformation("######### 账号 {num} #########" + Environment.NewLine, i);
@@ -27,7 +27,7 @@ public abstract class BaseMultiAccountsAppService(
             }
             catch (Exception e)
             {
-                failedAccounts.Add(i);
+                failedAccounts.Add((i, e));
                 logger.LogWarning(e, "账号 {num} 执行失败", i);
             }
         }
@@ -35,7 +35,8 @@ public abstract class BaseMultiAccountsAppService(
         if (failedAccounts.Count > 0)
         {
             throw new TaskExecutionException(
-                $"{failedAccounts.Count} 个账号执行失败：{string.Join(", ", failedAccounts)}"
+                $"{failedAccounts.Count} 个账号执行失败：{string.Join("；", failedAccounts.Select(x => $"账号{x.Index}：{x.Exception.Message}"))}",
+                new AggregateException(failedAccounts.Select(x => x.Exception))
             );
         }
     }

@@ -53,7 +53,7 @@ public interface IVideoDomainService : IDomainService
     /// 观看并分享视频
     /// </summary>
     /// <param name="dailyTaskStatus"></param>
-    Task WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck);
+    Task<TaskStepResult> WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck);
 
     /// <summary>
     /// 观看
