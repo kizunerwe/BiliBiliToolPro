@@ -9,6 +9,8 @@ public class ChargeTaskOptions : BaseConfigOptions
     /// </summary>
     public string? AutoChargeUpId { get; set; }
 
+    public string BusinessTimeZoneId { get; set; } = "Asia/Shanghai";
+
     private string? _chargeComment;
 
     /// <summary>
@@ -52,6 +54,7 @@ public class ChargeTaskOptions : BaseConfigOptions
             new Dictionary<string, string>
             {
                 { $"{SectionName}:{nameof(AutoChargeUpId)}", AutoChargeUpId ?? "" },
+                { $"{SectionName}:{nameof(BusinessTimeZoneId)}", BusinessTimeZoneId },
                 { $"{SectionName}:{nameof(ChargeComment)}", _chargeComment ?? "" },
             }
         );

@@ -58,22 +58,8 @@
                             </MudItem>
 
                             <MudItem xs="12" md="6">
-                                <MudSwitch T="bool" Value="_isSpecifyUpToggled" ValueChanged="OnSpecifyUpToggled"
-                                           Label="指定其他UP" Color="Color.Primary"
-                                           HelperText="开启后可以指定充电给其他UP主" />
-                                @if (_isSpecifyUpToggled)
-                                {
-                                    <div>
-                                        <div style="display: flex; align-items: end; gap: 8px;">
-                                            <MudTextField T="string" @bind-Value="_config.AutoChargeUpId" Label="充电Up主Id"
-                                                          HelperText="阿B最新策略已不允许为自己充电了，可以填自己小号id，或者支持作者的。开源不易，感谢支持~" Class="mt-3" style="flex: 1;"/>
-                                            <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
-                                                       OnClick="() => SetSupportAuthor()" Class="mt-3" style="white-space: nowrap;">
-                                                支持作者
-                                            </MudButton>
-                                        </div>
-                                    </div>
-                                }
+                                <MudTextField T="string" @bind-Value="_config.AutoChargeUpId" Label="充电目标 UID"
+                                              HelperText="必须填写有效且不属于当前账号的 UP 主 UID" />
                             </MudItem>
                         </MudGrid>
                     </MudCardContent>

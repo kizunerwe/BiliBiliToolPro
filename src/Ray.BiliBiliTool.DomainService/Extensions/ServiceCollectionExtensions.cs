@@ -7,6 +7,8 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddDomainServices(this IServiceCollection services)
     {
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<ChargeExecutionPolicy>();
         services.AddSingleton<RankingVideoCache>();
         services.AddSingleton<DonateCoinSelectionStateStore>();
         services.AddSingleton<VipBigPointAccessKeyStore>();

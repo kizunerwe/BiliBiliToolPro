@@ -19,8 +19,6 @@ public static class Constants
 
     public static string QingLongReadmeUrl = $"{SourceCodeUrl}/blob/main/qinglong/README.md";
 
-    public static string FallbackAutoChargeUpId = "220893216";
-
     /// <summary>
     /// 每日任务exp
     /// </summary>
@@ -61,7 +59,7 @@ public static class Constants
         { "--selectLike", "DailyTaskConfig:SelectLike" },
         { "--supportUpIds", "DailyTaskConfig:SupportUpIds" },
         { "--dayOfAutoCharge", "DailyTaskConfig:DayOfAutoCharge" },
-        { "--autoChargeUpId", "DailyTaskConfig:AutoChargeUpId" },
+        { "--autoChargeUpId", "ChargeTaskConfig:AutoChargeUpId" },
         { "--dayOfReceiveVipPrivilege", "DailyTaskConfig:DayOfReceiveVipPrivilege" },
         { "--isExchangeSilver2Coin", "DailyTaskConfig:IsExchangeSilver2Coin" },
         { "--devicePlatform", "DailyTaskConfig:DevicePlatform" },

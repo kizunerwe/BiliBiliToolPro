@@ -6,6 +6,7 @@ using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Application.Attributes;
 using Ray.BiliBiliTool.Application.Contracts;
 using Ray.BiliBiliTool.Config.Options;
+using Ray.BiliBiliTool.DomainService.Dtos;
 using Ray.BiliBiliTool.DomainService.Interfaces;
 using Ray.BiliBiliTool.Infrastructure.Cookie;
 using Ray.BiliBiliTool.Infrastructure.Enums;
@@ -36,7 +37,16 @@ public class ChargeTaskAppService(
 
         await SetCookiesAsync(ck, cancellationToken);
         UserInfo userInfo = await Login(ck);
-        await Charge(userInfo, ck);
+        var result = await chargeDomainService.Charge(userInfo, ck);
+        if (result.Status == TaskStepStatus.Failed)
+        {
+            throw new TaskExecutionException($"B币券充电失败：{result.Reason}");
+        }
+
+        if (result.Status == TaskStepStatus.Skipped)
+        {
+            logger.LogInformation("B币券充电跳过：{reason}", result.Reason);
+        }
     }
 
     [TaskInterceptor("Set Cookie")]
@@ -72,12 +82,6 @@ public class ChargeTaskAppService(
     /// <summary>
     /// 每月为自己充电
     /// </summary>
-    [TaskInterceptor("B币券充电", rethrowWhenException: false)]
-    private async Task Charge(UserInfo userInfo, BiliCookie ck)
-    {
-        await chargeDomainService.Charge(userInfo, ck);
-    }
-
     private async Task SaveCookieAsync(BiliCookie ckInfo, CancellationToken cancellationToken)
     {
         var platformType = configuration.GetSection("PlatformType").Get<PlatformType>();

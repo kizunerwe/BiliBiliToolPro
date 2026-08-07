@@ -12,7 +12,10 @@ public interface IChargeDomainService : IDomainService
     /// 充电
     /// </summary>
     /// <param name="userInfo"></param>
-    Task Charge(UserInfo userInfo, BiliCookie ck);
+    Task<Ray.BiliBiliTool.DomainService.Dtos.TaskStepResult> Charge(
+        UserInfo userInfo,
+        BiliCookie ck
+    );
 
     /// <summary>
     /// 充电后留言
