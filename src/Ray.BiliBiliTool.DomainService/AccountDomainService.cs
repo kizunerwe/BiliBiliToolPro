@@ -33,7 +33,7 @@ public class AccountDomainService(
     {
         BiliApiResponse<UserInfo> apiResponse = await userInfoApi.LoginByCookie(cookie.ToString());
 
-        if (apiResponse.Code != 0 || !apiResponse.Data!.IsLogin)
+        if (apiResponse.Code != 0 || apiResponse.Data is null || !apiResponse.Data.IsLogin)
         {
             throw new Exception("登录失败，请检查Cookie");
             ;
@@ -43,8 +43,9 @@ public class AccountDomainService(
 
         logger.LogInformation("{summary}", AccountLoginLogFormatter.BuildAccountSummary(useInfo));
 
-        int? estimatedDays =
-            useInfo.Level_info?.Current_level is > 0 and < 6 ? CalculateUpgradeTime(useInfo) : null;
+        int? estimatedDays = useInfo.Level_info?.Current_level is > 0 and < 6
+            ? CalculateUpgradeTime(useInfo)
+            : null;
 
         logger.LogInformation(
             "{summary}",
@@ -60,23 +61,23 @@ public class AccountDomainService(
     /// <returns></returns>
     public async Task<DailyTaskInfo> GetDailyTaskStatus(BiliCookie ck)
     {
-        DailyTaskInfo result = new();
         BiliApiResponse<DailyTaskInfo> apiResponse = await dailyTaskApi.GetDailyTaskRewardInfoAsync(
             ck.ToString()
         );
-        if (apiResponse.Code == 0)
+        if (apiResponse.Code == 0 && apiResponse.Data is not null)
         {
             logger.LogDebug("请求本日任务完成状态成功");
-            result = apiResponse.Data;
-        }
-        else
-        {
-            logger.LogWarning("获取今日任务完成状态失败：{result}", apiResponse.ToJsonStr());
-            result = (await dailyTaskApi.GetDailyTaskRewardInfoAsync(ck.ToString())).Data;
-            //todo:偶发性请求失败，再请求一次，这么写很丑陋，待用polly再框架层面实现
+            return apiResponse.Data;
         }
 
-        return result!;
+        logger.LogWarning("获取今日任务完成状态失败：{result}", apiResponse.ToJsonStr());
+        var retry = await dailyTaskApi.GetDailyTaskRewardInfoAsync(ck.ToString());
+        if (retry.Code == 0 && retry.Data is not null)
+        {
+            return retry.Data;
+        }
+
+        throw new InvalidOperationException($"获取今日任务完成状态失败：{retry.Message}");
     }
 
     /// <summary>
@@ -119,7 +120,10 @@ public class AccountDomainService(
         {
             Pn = totalPage,
         };
-        List<UpInfo> followings = (await relationApi.GetFollowingsByTag(req, ck.ToString())).Data;
+        var followingsResponse = await relationApi.GetFollowingsByTag(req, ck.ToString());
+        if (followingsResponse.Code != 0 || followingsResponse.Data is null)
+            throw new InvalidOperationException($"获取取关列表失败：{followingsResponse.Message}");
+        List<UpInfo> followings = followingsResponse.Data;
         followings.Reverse();
 
         var targetList = new List<UpInfo>();
@@ -140,7 +144,12 @@ public class AccountDomainService(
                 if (pn <= 0)
                     break;
                 req.Pn = pn;
-                followings = (await relationApi.GetFollowingsByTag(req, ck.ToString())).Data;
+                followingsResponse = await relationApi.GetFollowingsByTag(req, ck.ToString());
+                if (followingsResponse.Code != 0 || followingsResponse.Data is null)
+                    throw new InvalidOperationException(
+                        $"获取取关列表失败：{followingsResponse.Message}"
+                    );
+                followings = followingsResponse.Data;
                 followings.Reverse();
             }
         }
@@ -196,7 +205,10 @@ public class AccountDomainService(
     private async Task<TagDto?> GetTag(string groupName, BiliCookie ck)
     {
         string getTagsReferer = string.Format(RelationApiConstant.GetTagsReferer, ck.UserId);
-        List<TagDto> tagList = (await relationApi.GetTags(ck.ToString(), getTagsReferer)).Data!;
+        var response = await relationApi.GetTags(ck.ToString(), getTagsReferer);
+        if (response.Code != 0 || response.Data is null)
+            throw new InvalidOperationException($"获取分组列表失败：{response.Message}");
+        List<TagDto> tagList = response.Data;
         var tag = tagList.FirstOrDefault(x => x.Name == groupName);
         return tag;
     }

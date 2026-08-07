@@ -123,6 +123,12 @@ public sealed class FavoriteDomainService(
             return null;
         }
 
-        return response.Data.List.Where(x => x.Title == folderName).ToList();
+        if (response.Data is null)
+        {
+            logger.LogError("获取收藏夹列表失败：响应缺少 data（业务码：{Code}）", response.Code);
+            return null;
+        }
+
+        return (response.Data.List ?? []).Where(x => x.Title == folderName).ToList();
     }
 }

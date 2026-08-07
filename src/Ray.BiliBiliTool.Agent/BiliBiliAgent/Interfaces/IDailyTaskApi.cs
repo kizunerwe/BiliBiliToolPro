@@ -25,7 +25,7 @@ public interface IDailyTaskApi : IBiliBiliApi
     [Header("Referer", "https://www.bilibili.com/")]
     [Header("Origin", "https://www.bilibili.com")]
     [HttpGet("/x/web-interface/coin/today/exp")]
-    Task<BiliApiResponse<int>> GetDonateCoinExpAsync([Header("Cookie")] string ck);
+    Task<BiliApiResponse<int?>> GetDonateCoinExpAsync([Header("Cookie")] string ck);
 
     /// <summary>
     /// 获取VIP特权

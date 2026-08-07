@@ -46,6 +46,8 @@ public class LoginDomainService(
             throw new Exception($"获取二维码失败：{re.ToJsonStr()}");
         }
 
+        if (re.Data is null)
+            throw new InvalidOperationException($"获取二维码失败：{re.Message}");
         var url = re.Data.Url;
         GenerateQrCode(url);
 
@@ -76,6 +78,12 @@ public class LoginDomainService(
             if (content?.Code != 0)
             {
                 logger.LogWarning("调用检测接口异常：{msg}", check.ToJsonStr());
+                break;
+            }
+
+            if (content.Data is null)
+            {
+                logger.LogWarning("调用检测接口缺少数据：{msg}", content.Message);
                 break;
             }
 

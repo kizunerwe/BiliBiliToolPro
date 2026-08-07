@@ -95,10 +95,15 @@ public class MangaDomainService(
         logger.LogInformation("【今天】{day}号", day);
 
         var response = await mangaApi.ReceiveMangaVipReward(reason_id, ck.ToString());
-        if (response.Code == 0)
+        if (response.Code == 0 && response.Data is not null)
         {
             logger.LogInformation("【领取结果】成功");
             logger.LogInformation($"【获取】{response.Data.Amount}张漫读劵");
+        }
+        else if (response.Code == 0)
+        {
+            logger.LogInformation("【领取结果】失败");
+            logger.LogInformation("【原因】响应缺少数据");
         }
         else
         {
