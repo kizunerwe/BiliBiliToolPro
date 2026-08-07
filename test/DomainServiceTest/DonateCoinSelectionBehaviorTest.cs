@@ -407,7 +407,7 @@ public sealed class DonateCoinSelectionBehaviorTest
             return Task.FromResult(WatchResult);
         }
 
-        public Task WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck)
+        public Task<TaskStepResult> WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck)
         {
             throw new NotImplementedException();
         }

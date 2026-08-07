@@ -148,7 +148,7 @@ public class DonateCoinSelectionLoggingTest
             CancellationToken cancellationToken
         ) => Task.FromResult(true);
 
-        public Task WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck)
+        public Task<TaskStepResult> WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck)
         {
             throw new NotImplementedException();
         }
