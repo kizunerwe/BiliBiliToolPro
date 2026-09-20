@@ -26,5 +26,19 @@ acquire_bilitool_lock() {
     esac
 
     exec 9>"$lock_file" || return 1
-    flock -w "$wait_seconds" 9
+    flock -w "$wait_seconds" 9 &
+    bilitool_lock_waiter_pid=$!
+    local status=0
+    if wait "$bilitool_lock_waiter_pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    bilitool_lock_waiter_pid=""
+    return "$status"
+}
+
+release_bilitool_lock() {
+    flock -u 9 2>/dev/null || true
+    exec 9>&-
 }

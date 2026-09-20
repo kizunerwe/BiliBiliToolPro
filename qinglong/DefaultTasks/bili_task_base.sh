@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 # new Env("bili_base")
 
-# Stop script on NZEC
-set -e
-# Stop script if unbound variable found (use ${var:-} if intentional)
-set -u
-# By default cmd1 | cmd2 returns exit code of cmd2 regardless of cmd1 success
-# This is causing it to fail
-set -o pipefail
-
 verbose=false                                 # 开启debug日志
 bili_repo=${BILI_REPO:-"kizunerwe/bilibilitoolpro"} # 仓库地址
 bili_branch=${BILI_BRANCH:-""}                # 分支名，空或_develop
@@ -72,6 +64,61 @@ current_os="linux"         # 或linux-musl
 machine_architecture="x64" # 或arm、arm64
 bilitool_installed_version=0
 library_only="${BILITOOL_BASE_LIBRARY_ONLY-false}"
+bilitool_runtime_pid=""
+bilitool_lock_waiter_pid=""
+bilitool_stop_requested=false
+bilitool_job_pid=""
+bilitool_job_signal_status=0
+
+wait_for_managed_process_exit() {
+    local pid="$1"
+    local grace_seconds="${BILITOOL_STOP_GRACE_SECONDS:-10}"
+    local elapsed=0
+
+    case "$grace_seconds" in
+        ''|*[!0-9]*) grace_seconds=10 ;;
+    esac
+
+    while kill -0 "$pid" 2>/dev/null && [ "$elapsed" -lt "$grace_seconds" ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        say_warning "任务在 ${grace_seconds} 秒内未退出，发送 KILL"
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+}
+
+stop_bilitool_children() {
+    local signal_name="${1:-TERM}"
+    bilitool_stop_requested=true
+
+    if [ -n "${bilitool_lock_waiter_pid:-}" ] && kill -0 "$bilitool_lock_waiter_pid" 2>/dev/null; then
+        kill -"$signal_name" "$bilitool_lock_waiter_pid" 2>/dev/null || true
+        wait "$bilitool_lock_waiter_pid" 2>/dev/null || true
+        bilitool_lock_waiter_pid=""
+    fi
+    if [ -n "${bilitool_runtime_pid:-}" ] && kill -0 "$bilitool_runtime_pid" 2>/dev/null; then
+        kill -"$signal_name" "$bilitool_runtime_pid" 2>/dev/null || true
+        wait_for_managed_process_exit "$bilitool_runtime_pid"
+        wait "$bilitool_runtime_pid" 2>/dev/null || true
+        bilitool_runtime_pid=""
+    fi
+}
+
+run_managed_process() {
+    bilitool_stop_requested=false
+    "$@" 9>&- &
+    bilitool_runtime_pid=$!
+    local status=0
+    if wait "$bilitool_runtime_pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    bilitool_runtime_pid=""
+    return "$status"
+}
 
 should_check_bilitool_update() {
     local now_epoch="$1"
@@ -649,15 +696,122 @@ run_task() {
 
     if [ "$prefer_mode" == "dotnet" ]; then
         publish_console
-        dotnet "$qinglong_bili_repo_dir/bin/publish/Ray.BiliBiliTool.Console.dll" --ENVIRONMENT=Production
+        run_managed_process dotnet "$qinglong_bili_repo_dir/bin/publish/Ray.BiliBiliTool.Console.dll" --ENVIRONMENT=Production
     else
         cp -f "$bilitool_installed_dir/Ray.BiliBiliTool.Console" .
-        chmod +x ./Ray.BiliBiliTool.Console && ./Ray.BiliBiliTool.Console --ENVIRONMENT=Production
+        chmod +x ./Ray.BiliBiliTool.Console
+        run_managed_process ./Ray.BiliBiliTool.Console --ENVIRONMENT=Production
     fi
 }
 
-if [ "$library_only" != true ]; then
+run_bilitool_worker() (
+    set -euo pipefail
+    trap 'stop_bilitool_children TERM; exit 143' TERM
+    trap 'stop_bilitool_children INT; exit 130' INT
+    trap 'stop_bilitool_children HUP; exit 129' HUP
+    trap 'stop_bilitool_children TERM; release_bilitool_lock' EXIT
+
     initialize_bilitool_context
     check_os
-    install || exit 1
-fi
+    install
+    run_task "$1"
+)
+
+restore_bilitool_trap() {
+    local saved_trap="$1"
+    local signal_name="$2"
+    if [ -n "$saved_trap" ]; then
+        eval "$saved_trap"
+    else
+        trap - "$signal_name"
+    fi
+}
+
+forward_bilitool_job_signal() {
+    local signal_name="$1"
+    local status="$2"
+    bilitool_job_signal_status="$status"
+    if [ -n "${bilitool_job_pid:-}" ]; then
+        stop_bilitool_job_group "$signal_name"
+    fi
+}
+
+stop_bilitool_job_group() {
+    local signal_name="${1:-TERM}"
+    local grace_seconds="${BILITOOL_STOP_GRACE_SECONDS:-10}"
+    local elapsed=0
+
+    [ -n "${bilitool_job_pid:-}" ] || return 0
+    case "$grace_seconds" in
+        ''|*[!0-9]*) grace_seconds=10 ;;
+    esac
+
+    kill -"$signal_name" -- "-$bilitool_job_pid" 2>/dev/null || true
+    while kill -0 -- "-$bilitool_job_pid" 2>/dev/null && [ "$elapsed" -lt "$grace_seconds" ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if kill -0 -- "-$bilitool_job_pid" 2>/dev/null; then
+        say_warning "任务进程组在 ${grace_seconds} 秒内未退出，发送 KILL"
+        kill -KILL -- "-$bilitool_job_pid" 2>/dev/null || true
+    fi
+}
+
+run_bilitool_job() {
+    local saved_term_trap saved_int_trap saved_hup_trap status
+    saved_term_trap="$(trap -p TERM)"
+    saved_int_trap="$(trap -p INT)"
+    saved_hup_trap="$(trap -p HUP)"
+    bilitool_job_signal_status=0
+
+    trap 'forward_bilitool_job_signal TERM 143' TERM
+    trap 'forward_bilitool_job_signal INT 130' INT
+    trap 'forward_bilitool_job_signal HUP 129' HUP
+
+    if [ -n "${BILITOOL_TEST_BEFORE_WORKER_SPAWN_HOOK:-}" ]; then
+        eval "$BILITOOL_TEST_BEFORE_WORKER_SPAWN_HOOK"
+    fi
+    if [ "$bilitool_job_signal_status" -eq 0 ]; then
+        if ! command -v setsid >/dev/null 2>&1; then
+            say_err "缺少setsid命令，请安装util-linux后重试"
+            status=1
+        else
+            BILITOOL_BASE_SCRIPT="$script_dir/bili_task_base.sh" \
+                BILITOOL_TARGET_CODE="$1" \
+                setsid bash -c '
+                    BILITOOL_BASE_LIBRARY_ONLY=true
+                    . "$BILITOOL_BASE_SCRIPT"
+                    if [ -n "${BILITOOL_TEST_WORKER_SETUP:-}" ]; then
+                        . "$BILITOOL_TEST_WORKER_SETUP"
+                    fi
+                    run_bilitool_worker "$BILITOOL_TARGET_CODE"
+                ' &
+            bilitool_job_pid=$!
+            if [ "$bilitool_job_signal_status" -ne 0 ]; then
+                stop_bilitool_job_group TERM
+            fi
+
+            if wait "$bilitool_job_pid"; then
+                status=0
+            else
+                status=$?
+            fi
+            if [ "$bilitool_job_signal_status" -ne 0 ]; then
+                stop_bilitool_job_group TERM
+                wait "$bilitool_job_pid" 2>/dev/null || true
+            fi
+        fi
+    else
+        status="$bilitool_job_signal_status"
+    fi
+    bilitool_job_pid=""
+
+    restore_bilitool_trap "$saved_term_trap" TERM
+    restore_bilitool_trap "$saved_int_trap" INT
+    restore_bilitool_trap "$saved_hup_trap" HUP
+
+    if [ "$bilitool_job_signal_status" -ne 0 ]; then
+        return "$bilitool_job_signal_status"
+    fi
+    return "$status"
+}
