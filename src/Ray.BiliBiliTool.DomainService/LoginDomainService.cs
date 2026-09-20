@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -7,6 +8,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using QRCoder;
 using Ray.BiliBiliTool.Agent;
+using Ray.BiliBiliTool.Agent.BiliBiliAgent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.Passport;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Interfaces;
@@ -33,6 +35,8 @@ public class LoginDomainService(
     IHomeApi homeApi,
     IConfiguration configuration,
     IOptions<QingLongOptions> qingLongOptions,
+    IOptions<DeviceCookieOptions> deviceCookieOptions,
+    IGaiaApi gaiaApi,
     VipBigPointAccessKeyStore vipBigPointAccessKeyStore
 ) : ILoginDomainService
 {
@@ -142,10 +146,20 @@ public class LoginDomainService(
                 {
                     logger.LogInformation("无需set");
                 }
-
-                return biliCookie;
             }
-            logger.LogError("访问主站失败：{msg}", homePage.ToJsonStr());
+            else
+            {
+                logger.LogError("访问主站失败：{msg}", homePage.ToJsonStr());
+            }
+
+            if (ApplyPinnedDeviceCookie(biliCookie))
+            {
+                // 已应用固定设备指纹配置，跳过设备指纹建档
+            }
+            else
+            {
+                await EnsureDeviceCookieAsync(biliCookie, cancellationToken);
+            }
         }
         catch (Exception e)
         {
@@ -154,6 +168,220 @@ public class LoginDomainService(
         }
 
         return biliCookie;
+    }
+
+    private bool ApplyPinnedDeviceCookie(BiliCookie biliCookie)
+    {
+        var options = deviceCookieOptions.Value;
+        if (!options.HasPinnedValues)
+            return false;
+
+        var applied = 0;
+        if (!string.IsNullOrWhiteSpace(options.Buvid3))
+        {
+            biliCookie.CookieItemDictionary["buvid3"] = options.Buvid3;
+            applied++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.Buvid4))
+        {
+            biliCookie.CookieItemDictionary["buvid4"] = options.Buvid4;
+            applied++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.BNut))
+        {
+            biliCookie.CookieItemDictionary["b_nut"] = options.BNut;
+            applied++;
+        }
+
+        logger.LogInformation(
+            "已应用固定设备指纹配置，覆盖{count}项设备Cookie，本次不再刷新服务端指纹",
+            applied
+        );
+        return true;
+    }
+
+    /// <summary>
+    /// 确保当前设备指纹已在服务端建立档案。
+    /// 程序生成（finger/spi）的 buvid3 是无档案的新设备，直接使用会被
+    /// 分享等接口以 -403"账号异常"拒绝；需向 gaia 网关上报一次设备指纹
+    /// （ExClimbWuzhi）激活（2026-09-15 生产容器实验验证）。
+    /// 以 Cookie 中存在 _uuid 作为"已建档"标记，避免重复上报；
+    /// 已建档的设备保持稳定使用，绝不每日刷新（刷新会丢失档案并触发风控）。
+    /// </summary>
+    private async Task EnsureDeviceCookieAsync(
+        BiliCookie biliCookie,
+        CancellationToken cancellationToken
+    )
+    {
+        var items = biliCookie.CookieItemDictionary;
+        var hasBuvid3 =
+            items.TryGetValue("buvid3", out var buvid3)
+            && !string.IsNullOrWhiteSpace(buvid3);
+        var hasUuid =
+            items.TryGetValue("_uuid", out var uuid) && !string.IsNullOrWhiteSpace(uuid);
+
+        if (hasBuvid3 && hasUuid)
+        {
+            logger.LogInformation("设备指纹已激活（buvid3 与 _uuid 齐全），保持稳定不刷新");
+            return;
+        }
+
+        if (!hasBuvid3)
+        {
+            logger.LogInformation("设备Cookie缺少buvid3，通过finger/spi生成");
+            await RefreshDeviceFingerprintAsync(biliCookie);
+            hasBuvid3 =
+                items.TryGetValue("buvid3", out buvid3)
+                && !string.IsNullOrWhiteSpace(buvid3);
+            if (!hasBuvid3)
+            {
+                logger.LogWarning("设备指纹生成失败，跳过gaia上报");
+                return;
+            }
+        }
+
+        var deviceUuid = hasUuid ? uuid! : GenerateDeviceUuid();
+        try
+        {
+            var payload = BuildGaiaPayload(deviceUuid);
+            var response = await gaiaApi.ReportDeviceFingerprint(
+                BuildDeviceCookieHeader(biliCookie, deviceUuid),
+                new GaiaReportRequest { Payload = payload }
+            );
+            if (response?.Code == 0)
+            {
+                items["_uuid"] = deviceUuid;
+                logger.LogInformation("设备指纹上报成功，服务端设备档案已建立");
+            }
+            else
+            {
+                logger.LogWarning(
+                    "设备指纹上报失败，返回码：{code}，消息：{message}",
+                    response?.Code,
+                    response?.Message
+                );
+            }
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning("设备指纹上报异常：{msg}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// 常见真实屏幕（宽, 高, 可用工作区高），用于指纹扰动
+    /// </summary>
+    private static readonly (int Width, int Height, int AvailHeight)[] ScreenProfiles =
+    [
+        (1920, 1080, 1048),
+        (1600, 900, 868),
+        (1536, 864, 832),
+        (1440, 900, 868),
+        (2560, 1440, 1408),
+    ];
+
+    /// <summary>
+    /// 基于真实浏览器设备特征模板构造 ExClimbWuzhi payload，
+    /// 替换动态字段：时间戳(5062)、来源页(03bf)、spm(39c8)、设备 _uuid(df35)。
+    /// 并做指纹扰动（屏幕分辨率取真实常见组合、canvas 指纹尾部随机化），
+    /// 降低多设备共享同一模板的服务端聚类特征
+    /// （2026-09-15 生产容器实验验证：扰动后上报激活依然有效）。
+    /// </summary>
+    private static string BuildGaiaPayload(string deviceUuid)
+    {
+        var payload = JObject.Parse(GaiaDeviceFingerprintTemplate.PayloadJson);
+        payload["5062"] = DateTimeOffset.Now.ToUnixTimeMilliseconds().ToString();
+        payload["03bf"] = "https%3A%2F%2Fwww.bilibili.com%2F";
+        payload["39c8"] = "333.1007.fp.risk";
+        payload["df35"] = deviceUuid;
+
+        var fingerprint = (JObject)payload["3c43"]!;
+        var (width, height, availHeight) = ScreenProfiles[Random.Shared.Next(ScreenProfiles.Length)];
+        fingerprint["748e"] = new JArray(width, height);
+        fingerprint["d61f"] = new JArray(width, availHeight);
+        fingerprint["13ab"] = PerturbCanvasTail((string)fingerprint["13ab"]!);
+        fingerprint["bfe9"] = PerturbCanvasTail((string)fingerprint["bfe9"]!);
+
+        return payload.ToString(Formatting.None);
+    }
+
+    /// <summary>
+    /// canvas 指纹尾部（base64）随机化，保持格式合法
+    /// </summary>
+    private static string PerturbCanvasTail(string value)
+    {
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        var chars = value.ToCharArray();
+        var start = Math.Max(0, chars.Length - 16);
+        for (var i = start; i < chars.Length; i++)
+        {
+            if (chars[i] != '=')
+            {
+                chars[i] = alphabet[Random.Shared.Next(alphabet.Length)];
+            }
+        }
+
+        return new string(chars);
+    }
+
+    /// <summary>
+    /// 仿浏览器 _uuid 格式：9-4-5-4-12 位大写十六进制 + 6 位数字 + "infoc" 后缀
+    /// </summary>
+    private static string GenerateDeviceUuid()
+    {
+        var hex = Convert.ToHexString(RandomNumberGenerator.GetBytes(18));
+        return $"{hex[..9]}-{hex[9..13]}-{hex[13..18]}-{hex[18..22]}-{hex[22..34]}"
+            + $"{Random.Shared.Next(100000, 999999)}infoc";
+    }
+
+    /// <summary>
+    /// 构造 gaia 上报所需的设备 Cookie 头（buvid3/buvid4/b_nut/_uuid）
+    /// </summary>
+    private static string BuildDeviceCookieHeader(BiliCookie biliCookie, string deviceUuid)
+    {
+        var items = biliCookie.CookieItemDictionary;
+        var parts = new List<string>();
+        foreach (var key in new[] { "buvid3", "buvid4", "b_nut" })
+        {
+            if (items.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+            {
+                parts.Add($"{key}={value}");
+            }
+        }
+
+        parts.Add($"_uuid={deviceUuid}");
+        return string.Join("; ", parts);
+    }
+
+    private async Task RefreshDeviceFingerprintAsync(BiliCookie biliCookie)
+    {
+        var response = await userInfoApi.GetDeviceFingerprint(biliCookie.ToString());
+        if (response?.Code != 0 || response.Data is null)
+        {
+            logger.LogWarning(
+                "刷新设备指纹失败，保留现有Cookie，返回码：{code}，消息：{message}",
+                response?.Code,
+                response?.Message
+            );
+            return;
+        }
+
+        var updated = 0;
+        if (!string.IsNullOrWhiteSpace(response.Data.B_3))
+        {
+            biliCookie.CookieItemDictionary["buvid3"] = response.Data.B_3;
+            updated++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.Data.B_4))
+        {
+            biliCookie.CookieItemDictionary["buvid4"] = response.Data.B_4;
+            updated++;
+        }
+
+        logger.LogInformation("设备指纹刷新成功，更新{count}项设备Cookie", updated);
     }
 
     public async Task<PassportTvLoginResult> LoginByTvQrCodeAsync(

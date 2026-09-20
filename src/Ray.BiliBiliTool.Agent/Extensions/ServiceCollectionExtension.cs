@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -60,6 +60,16 @@ public static class ServiceCollectionExtension
         };
 
         services.AddBiliBiliClientApi<IUserInfoApi>(BiliHosts.Api, config, true);
+
+        // gaia 设备指纹上报：UA 与模板设备特征配套，且不加 w_rid（实验验证的请求形状）
+        Action<IServiceProvider, HttpClient> configGaia = (_, c) =>
+        {
+            c.DefaultRequestHeaders.Add(
+                "User-Agent",
+                GaiaDeviceFingerprintTemplate.UserAgent
+            );
+        };
+        services.AddBiliBiliClientApi<IGaiaApi>(BiliHosts.Api, configGaia, true);
 
         services.AddBiliBiliClientApi<IUpInfoApi>(BiliHosts.Api, config);
         services.AddBiliBiliClientApi<IDailyTaskApi>(BiliHosts.Api, config);

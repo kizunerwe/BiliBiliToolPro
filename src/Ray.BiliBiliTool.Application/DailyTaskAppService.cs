@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Ray.BiliBiliTool.Agent;
@@ -51,10 +51,16 @@ public class DailyTaskAppService(
         );
         if (status.Succeeded && status.Value is not null)
         {
-            await steps.RunAsync(
-                "观看、分享视频",
-                () => videoDomainService.WatchAndShareVideo(status.Value, ck)
-            );
+            Func<Task<TaskStepResult>> watchAndShare = videoDomainService
+                is ICancellableVideoDomainService cancellableVideoDomainService
+                ? () =>
+                    cancellableVideoDomainService.WatchAndShareVideo(
+                        status.Value,
+                        ck,
+                        cancellationToken
+                    )
+                : () => videoDomainService.WatchAndShareVideo(status.Value, ck);
+            await steps.RunAsync("观看、分享视频", watchAndShare);
         }
         else
         {
@@ -110,20 +116,29 @@ public class DailyTaskAppService(
     [TaskInterceptor("Set Cookie")]
     private async Task SetCookiesAsync(BiliCookie biliCookie, CancellationToken cancellationToken)
     {
-        //判断cookie是否完整
-        if (!string.IsNullOrWhiteSpace(biliCookie.Buvid))
-        {
-            logger.LogInformation("Cookie完整，不需要Set Cookie");
-            return;
-        }
-
-        //Set
-        logger.LogInformation("开始Set Cookie");
         var ck = await loginDomainService.SetCookieAsync(biliCookie, cancellationToken);
 
-        //持久化
+        var remainingMissingKeys = GetMissingRefreshTargetDeviceCookieKeys(ck);
+        if (remainingMissingKeys.Count > 0)
+        {
+            logger.LogWarning(
+                "设备Cookie仍缺少字段：{missingKeys}，分享等接口可能被风控拒绝",
+                string.Join("、", remainingMissingKeys)
+            );
+        }
+
         logger.LogInformation("持久化Cookie");
         await SaveCookieAsync(ck, cancellationToken);
+    }
+
+    private static IReadOnlyList<string> GetMissingRefreshTargetDeviceCookieKeys(BiliCookie cookie)
+    {
+        string[] keys = ["buvid3", "buvid4", "b_nut"];
+        return keys.Where(key =>
+                !cookie.CookieItemDictionary.TryGetValue(key, out string? value)
+                || string.IsNullOrWhiteSpace(value)
+            )
+            .ToArray();
     }
 
     private async Task SaveCookieAsync(BiliCookie ckInfo, CancellationToken cancellationToken)

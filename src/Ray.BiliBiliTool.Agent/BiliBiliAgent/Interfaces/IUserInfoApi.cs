@@ -17,4 +17,12 @@ public interface IUserInfoApi : IBiliBiliApi
     /// <returns></returns>
     [HttpGet("/x/web-interface/nav")]
     Task<BiliApiResponse<UserInfo>> LoginByCookie([Header("Cookie")] string ck);
+
+    /// <summary>
+    /// 获取当前会话绑定的 Web 设备指纹 Cookie。
+    /// </summary>
+    [HttpGet("/x/frontend/finger/spi")]
+    Task<BiliApiResponse<DeviceFingerprintResponse>> GetDeviceFingerprint(
+        [Header("Cookie")] string ck
+    );
 }
