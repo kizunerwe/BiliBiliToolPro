@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -29,7 +30,7 @@ public class ChargeApiTest
     #region ChargeV2Async
 
     [Fact]
-    public async void ChargeV2Async_SendRequest_NotEnough()
+    public async Task ChargeV2Async_SendRequest_NotEnough()
     {
         // Arrange
         var upId = 220893216;

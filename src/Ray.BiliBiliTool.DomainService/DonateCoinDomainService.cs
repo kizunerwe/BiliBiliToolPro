@@ -45,6 +45,9 @@ public class DonateCoinDomainService(
     private readonly HashSet<long> _blacklistedAidSet = [];
     private readonly Dictionary<long, DonateCoinConfigUpProgressSnapshot> _configUpProgressByUpId =
     [];
+    private readonly HashSet<long> _confirmedExhaustedConfigUpIds = [];
+    private readonly Dictionary<long, int> _configUpStatusChecksThisRun = [];
+    private readonly Dictionary<long, string> _lastConfigUpProgressMessageByUpId = [];
 
     /// <summary>
     /// 完成投币任务
@@ -106,10 +109,10 @@ public class DonateCoinDomainService(
             var selection = await TryGetCanDonateVideoWithSource(ck);
             if (selection.Video == null)
             {
-                exhausted = true;
                 retryableFailure =
                     selection.ConfigUpScanStatus == DonateCoinConfigUpScanStatus.RetryableFailure
                     || selection.RetryableFailure;
+                exhausted = !retryableFailure;
                 failureReason = selection.FailureReason;
                 break;
             }
@@ -194,20 +197,52 @@ public class DonateCoinDomainService(
             }
 
             success++;
-            await MarkVideoAsBlacklistedAsync(ck.UserId, video.Aid);
             if (selection.Source == DonateCoinVideoSource.ConfigUp && selection.ConfigUpId.HasValue)
             {
-                await IncreaseConfigUpRecordedCountIfNeededAsync(
+                if (
+                    selection.ConfigUpNextVideoIndex.HasValue
+                    && _configUpProgressByUpId.TryGetValue(
+                        selection.ConfigUpId.Value,
+                        out var configUpProgress
+                    )
+                )
+                {
+                    _configUpProgressByUpId[selection.ConfigUpId.Value] = configUpProgress with
+                    {
+                        NextVideoIndex = selection.ConfigUpNextVideoIndex.Value,
+                    };
+                }
+                await MarkConfigUpVideoTerminalAsync(
                     ck.UserId,
                     selection.ConfigUpId.Value,
                     video.Aid
                 );
+                if (
+                    _configUpProgressByUpId.TryGetValue(
+                        selection.ConfigUpId.Value,
+                        out var updatedConfigUpProgress
+                    )
+                )
+                {
+                    LogConfigUpProgress(selection.ConfigUpId.Value, updatedConfigUpProgress);
+                }
+            }
+            else
+            {
+                await MarkVideoAsBlacklistedAsync(ck.UserId, video.Aid);
             }
         }
 
         if (success == needCoins)
         {
             logger.LogInformation("视频投币任务完成");
+        }
+        else if (retryableFailure)
+        {
+            logger.LogWarning(
+                "视频扫描异常，已保留进度，等待下次重试：{reason}",
+                failureReason ?? "未知原因"
+            );
         }
         else if (exhausted)
         {
@@ -328,6 +363,9 @@ public class DonateCoinDomainService(
         _attemptedVideoAidSet.Clear();
         _blacklistedAidSet.Clear();
         _configUpProgressByUpId.Clear();
+        _confirmedExhaustedConfigUpIds.Clear();
+        _configUpStatusChecksThisRun.Clear();
+        _lastConfigUpProgressMessageByUpId.Clear();
     }
 
     private async Task LoadPersistentSelectionStateAsync(string userId)
@@ -357,12 +395,18 @@ public class DonateCoinDomainService(
         DonateCoinConfigUpProgressSnapshot progress
     )
     {
-        if (
-            _configUpProgressByUpId.TryGetValue(upId, out var latest)
-            && latest.RecordedVideoCount > progress.RecordedVideoCount
-        )
+        if (_configUpProgressByUpId.TryGetValue(upId, out var latest))
         {
-            progress = progress with { RecordedVideoCount = latest.RecordedVideoCount };
+            progress = progress with
+            {
+                RecordedVideoCount = Math.Max(
+                    latest.RecordedVideoCount,
+                    progress.RecordedVideoCount
+                ),
+                RecordedAids = (latest.RecordedAids ?? new HashSet<long>())
+                    .Concat(progress.RecordedAids ?? new HashSet<long>())
+                    .ToHashSet(),
+            };
         }
 
         _configUpProgressByUpId[upId] = progress;
@@ -422,6 +466,11 @@ public class DonateCoinDomainService(
                 continue;
             }
 
+            if (_confirmedExhaustedConfigUpIds.Contains(upId))
+            {
+                continue;
+            }
+
             var result = await TryGetCanDonateVideoByOrderedConfigUp(upId, ck);
             if (result.Video != null)
             {
@@ -429,6 +478,10 @@ public class DonateCoinDomainService(
             }
 
             lastResult = result;
+            if (result.ConfigUpScanStatus == DonateCoinConfigUpScanStatus.ConfirmedExhausted)
+            {
+                _confirmedExhaustedConfigUpIds.Add(upId);
+            }
             if (result.ConfigUpScanStatus == DonateCoinConfigUpScanStatus.RetryableFailure)
             {
                 return result;
@@ -452,10 +505,10 @@ public class DonateCoinDomainService(
         try
         {
             progress = await EnsureConfigUpProgressAsync(upId, ck);
-            LogConfigUpProgress(upId, progress);
 
             if (progress.Status == DonateCoinConfigUpScanStatus.ConfirmedExhausted)
             {
+                LogConfigUpProgress(upId, progress);
                 return new DonateCoinSourceSearchResult(
                     DonateCoinVideoSource.ConfigUp,
                     FailureReason: DonateCoinLogFormatter.BuildConfigUpConfirmedExhausted(),
@@ -528,8 +581,12 @@ public class DonateCoinDomainService(
                 }
 
                 var orderedPageVideos = pageVideos.Reverse().ToList();
+                var startIndex = Math.Clamp(progress.NextVideoIndex, 0, orderedPageVideos.Count);
+                var historicalTerminalSkipped = 0;
+                var alreadyDonated = 0;
+                var checkedThisSegment = 0;
                 for (
-                    var offset = 0;
+                    var offset = startIndex;
                     offset < orderedPageVideos.Count;
                     offset += ConfigUpCoinStatusConcurrency
                 )
@@ -538,7 +595,12 @@ public class DonateCoinDomainService(
                         .Skip(offset)
                         .Take(ConfigUpCoinStatusConcurrency)
                         .ToList();
-                    var coinStatuses = await GetConfigUpCoinStatusesAsync(batch, ck);
+                    var coinStatusBatch = await GetConfigUpCoinStatusesAsync(batch, ck);
+                    var coinStatuses = coinStatusBatch.Statuses;
+                    checkedThisSegment += coinStatusBatch.NewCheckCount;
+                    _configUpStatusChecksThisRun[upId] =
+                        _configUpStatusChecksThisRun.GetValueOrDefault(upId)
+                        + coinStatusBatch.NewCheckCount;
 
                     foreach (var video in batch)
                     {
@@ -553,11 +615,45 @@ public class DonateCoinDomainService(
                             : await GetVideoEligibilityAsync(video.Aid, ck, upId);
                         if (eligibility == DonateCoinVideoEligibility.Eligible)
                         {
+                            if (progress.NextVideoIndex > offset)
+                            {
+                                await SaveConfigUpProgressAsync(ck.UserId, upId, progress);
+                            }
+                            LogConfigUpPageSummary(
+                                upId,
+                                progress.NextPageNumber,
+                                checkedThisSegment,
+                                historicalTerminalSkipped,
+                                alreadyDonated,
+                                progress.NextVideoIndex,
+                                orderedPageVideos.Count
+                            );
                             return new DonateCoinSourceSearchResult(
                                 DonateCoinVideoSource.ConfigUp,
                                 video,
-                                ConfigUpId: upId
+                                ConfigUpId: upId,
+                                ConfigUpNextVideoIndex: orderedPageVideos.IndexOf(video) + 1
                             );
+                        }
+
+                        if (eligibility == DonateCoinVideoEligibility.Blacklisted)
+                        {
+                            historicalTerminalSkipped++;
+                        }
+                        else if (eligibility == DonateCoinVideoEligibility.AlreadyDonated)
+                        {
+                            alreadyDonated++;
+                        }
+
+                        if (
+                            eligibility == DonateCoinVideoEligibility.Blacklisted
+                            || eligibility == DonateCoinVideoEligibility.AlreadyDonated
+                        )
+                        {
+                            progress = progress with
+                            {
+                                NextVideoIndex = orderedPageVideos.IndexOf(video) + 1,
+                            };
                         }
 
                         if (eligibility == DonateCoinVideoEligibility.CheckFailed)
@@ -592,12 +688,30 @@ public class DonateCoinDomainService(
                             );
                         }
                     }
+
+                    if (progress.NextVideoIndex >= offset + batch.Count)
+                    {
+                        await SaveConfigUpProgressAsync(ck.UserId, upId, progress);
+                    }
                 }
+
+                LogConfigUpPageSummary(
+                    upId,
+                    progress.NextPageNumber,
+                    checkedThisSegment,
+                    historicalTerminalSkipped,
+                    alreadyDonated,
+                    progress.NextVideoIndex,
+                    orderedPageVideos.Count
+                );
 
                 progress = await MoveConfigUpCursorBackwardAsync(ck.UserId, upId, progress);
             }
 
-            progress = await MarkConfigUpConfirmedExhaustedAsync(ck.UserId, upId, progress);
+            if (progress.Status != DonateCoinConfigUpScanStatus.ConfirmedExhausted)
+            {
+                progress = await MarkConfigUpConfirmedExhaustedAsync(ck.UserId, upId, progress);
+            }
         }
         catch (Exception e)
         {
@@ -655,16 +769,16 @@ public class DonateCoinDomainService(
         )
         {
             var newVideoCount = Math.Max(0, videoCount - previous.VideoCount);
-            var optimizedStatus =
-                newVideoCount == 0
-                    ? DonateCoinConfigUpScanStatus.ConfirmedExhausted
-                    : DonateCoinConfigUpScanStatus.InProgress;
+            var optimizedStatus = DonateCoinConfigUpScanStatus.InProgress;
+            var pagesToScan = newVideoCount == 0 ? 1 : GetConfigUpStartPageNumber(newVideoCount);
             var optimizedProgress = new DonateCoinConfigUpProgressSnapshot(
                 videoCount,
                 today,
-                GetConfigUpStartPageNumber(newVideoCount),
+                pagesToScan,
                 recordedVideoCount,
-                optimizedStatus
+                optimizedStatus,
+                NextVideoIndex: 0,
+                RecordedAids: previous.RecordedAids ?? new HashSet<long>()
             );
             await SaveConfigUpProgressAsync(ck.UserId, upId, optimizedProgress);
             return optimizedProgress;
@@ -675,7 +789,9 @@ public class DonateCoinDomainService(
             today,
             GetConfigUpStartPageNumber(videoCount),
             recordedVideoCount,
-            DonateCoinConfigUpScanStatus.Unknown
+            DonateCoinConfigUpScanStatus.Unknown,
+            NextVideoIndex: 0,
+            RecordedAids: previous?.RecordedAids ?? new HashSet<long>()
         );
         await SaveConfigUpProgressAsync(ck.UserId, upId, progress);
         return progress;
@@ -691,6 +807,7 @@ public class DonateCoinDomainService(
         var updated = progress with
         {
             NextPageNumber = nextPageNumber,
+            NextVideoIndex = 0,
             Status =
                 nextPageNumber == 0
                     ? DonateCoinConfigUpScanStatus.ConfirmedExhausted
@@ -728,6 +845,7 @@ public class DonateCoinDomainService(
         var updated = progress with
         {
             NextPageNumber = 0,
+            NextVideoIndex = 0,
             Status = DonateCoinConfigUpScanStatus.ConfirmedExhausted,
             FailureReason = null,
         };
@@ -747,13 +865,23 @@ public class DonateCoinDomainService(
             _ => DonateCoinLogFormatter.BuildConfigUpInProgress(),
         };
 
-        logger.LogInformation(
-            "【配置UP】{upId}：已记录 {recordedCount} / 当前视频 {videoCount}，{status}",
+        var message = DonateCoinLogFormatter.BuildConfigUpProgress(
             upId,
             progress.RecordedVideoCount,
             progress.VideoCount,
+            _configUpStatusChecksThisRun.GetValueOrDefault(upId),
+            progress.NextPageNumber,
+            progress.NextVideoIndex,
             statusMessage
         );
+        if (
+            !_lastConfigUpProgressMessageByUpId.TryGetValue(upId, out var lastMessage)
+            || lastMessage != message
+        )
+        {
+            logger.LogInformation("{message}", message);
+            _lastConfigUpProgressMessageByUpId[upId] = message;
+        }
 
         if (
             progress.Status == DonateCoinConfigUpScanStatus.RetryableFailure
@@ -995,7 +1123,6 @@ public class DonateCoinDomainService(
     {
         if (_blacklistedAidSet.Contains(aid))
         {
-            logger.LogInformation("跳过候选视频 Av{aid}：已在投币进度中记录", aid);
             return DonateCoinVideoEligibility.Blacklisted;
         }
 
@@ -1019,19 +1146,29 @@ public class DonateCoinDomainService(
 
         if (multiply.Value > 0)
         {
-            await MarkVideoAsBlacklistedAsync(ck.UserId, aid);
             if (configUpId.HasValue)
             {
-                await IncreaseConfigUpRecordedCountIfNeededAsync(ck.UserId, configUpId.Value, aid);
+                await MarkConfigUpVideoTerminalAsync(ck.UserId, configUpId.Value, aid);
             }
-            logger.LogInformation("跳过候选视频 Av{aid}：已投过{num}枚硬币", aid, multiply.Value);
+            else
+            {
+                await MarkVideoAsBlacklistedAsync(ck.UserId, aid);
+            }
+            if (!configUpId.HasValue)
+            {
+                logger.LogInformation(
+                    "跳过候选视频 Av{aid}：已投过{num}枚硬币",
+                    aid,
+                    multiply.Value
+                );
+            }
             return DonateCoinVideoEligibility.AlreadyDonated;
         }
 
         return DonateCoinVideoEligibility.Eligible;
     }
 
-    private async Task<IReadOnlyDictionary<long, int?>> GetConfigUpCoinStatusesAsync(
+    private async Task<DonateCoinStatusBatchResult> GetConfigUpCoinStatusesAsync(
         IReadOnlyCollection<UpVideoInfo> videos,
         BiliCookie ck
     )
@@ -1046,8 +1183,12 @@ public class DonateCoinDomainService(
             .ToList();
         if (candidateAids.Count == 0)
         {
-            return new Dictionary<long, int?>();
+            return new DonateCoinStatusBatchResult(new Dictionary<long, int?>(), 0);
         }
+
+        var newCheckCount = candidateAids.Count(aid =>
+            !_videoCoinCountCache.ContainsKey(aid.ToString())
+        );
 
         using var limiter = new SemaphoreSlim(ConfigUpCoinStatusConcurrency);
         var tasks = candidateAids.Select(async aid =>
@@ -1067,7 +1208,10 @@ public class DonateCoinDomainService(
         });
 
         var results = await Task.WhenAll(tasks);
-        return results.ToDictionary(result => result.Aid, result => result.Multiply);
+        return new DonateCoinStatusBatchResult(
+            results.ToDictionary(result => result.Aid, result => result.Multiply),
+            newCheckCount
+        );
     }
 
     private async Task<int?> TryGetDonatedCoinsForVideoAsync(string aid, BiliCookie ck)
@@ -1096,22 +1240,58 @@ public class DonateCoinDomainService(
         }
     }
 
-    private async Task IncreaseConfigUpRecordedCountIfNeededAsync(
-        string userId,
-        long upId,
-        long aid
-    )
+    private async Task MarkConfigUpVideoTerminalAsync(string userId, long upId, long aid)
     {
         if (!_configUpProgressByUpId.TryGetValue(upId, out var progress))
         {
             return;
         }
 
+        var recordedAids = (progress.RecordedAids ?? new HashSet<long>()).ToHashSet();
+        if (recordedAids.Contains(aid))
+        {
+            _blacklistedAidSet.Add(aid);
+            return;
+        }
+
+        await selectionStateStore.MarkConfigUpVideoTerminalAsync(userId, upId, aid, progress);
+        _blacklistedAidSet.Add(aid);
+        recordedAids.Add(aid);
         var updated = progress with
         {
             RecordedVideoCount = Math.Min(progress.VideoCount, progress.RecordedVideoCount + 1),
+            RecordedAids = recordedAids,
         };
-        await SaveConfigUpProgressAsync(userId, upId, updated);
+        _configUpProgressByUpId[upId] = updated;
+    }
+
+    private void LogConfigUpPageSummary(
+        long upId,
+        int pageNumber,
+        int checkedThisSegment,
+        int historicalTerminalSkipped,
+        int alreadyDonated,
+        int nextVideoIndex,
+        int pageVideoCount
+    )
+    {
+        if (historicalTerminalSkipped == 0 && alreadyDonated == 0)
+        {
+            return;
+        }
+
+        logger.LogInformation(
+            "{message}",
+            DonateCoinLogFormatter.BuildConfigUpPageSummary(
+                upId,
+                pageNumber,
+                checkedThisSegment,
+                historicalTerminalSkipped,
+                alreadyDonated,
+                nextVideoIndex,
+                pageVideoCount
+            )
+        );
     }
 
     #endregion
@@ -1128,7 +1308,13 @@ public class DonateCoinDomainService(
         string? FailureReason = null,
         long? ConfigUpId = null,
         DonateCoinConfigUpScanStatus? ConfigUpScanStatus = null,
-        bool RetryableFailure = false
+        bool RetryableFailure = false,
+        int? ConfigUpNextVideoIndex = null
+    );
+
+    private sealed record DonateCoinStatusBatchResult(
+        IReadOnlyDictionary<long, int?> Statuses,
+        int NewCheckCount
     );
 
     private enum DonateCoinVideoEligibility

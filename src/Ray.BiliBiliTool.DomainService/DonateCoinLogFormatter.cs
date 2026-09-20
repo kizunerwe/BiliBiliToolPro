@@ -52,6 +52,39 @@ public static class DonateCoinLogFormatter
 
     public static string BuildConfigUpInProgress() => "扫描进行中";
 
+    public static string BuildConfigUpProgress(
+        long upId,
+        int historicalTerminalCount,
+        int videoCount,
+        int statusChecksThisRun,
+        int pageNumber,
+        int nextVideoIndex,
+        string status
+    )
+    {
+        var position =
+            pageNumber <= 0 ? "扫描位置已到末尾" : $"位置 第{pageNumber}页第{nextVideoIndex + 1}条";
+        return $"【配置UP】{upId}：历史终态 {historicalTerminalCount} / 当前视频 {videoCount}，本轮接口检查 {statusChecksThisRun}，{position}，{status}";
+    }
+
+    public static string BuildConfigUpPageSummary(
+        long upId,
+        int pageNumber,
+        int checkedThisSegment,
+        int historicalTerminalSkipped,
+        int alreadyDonated,
+        int nextVideoIndex,
+        int pageVideoCount
+    )
+    {
+        var remaining = Math.Max(0, pageVideoCount - nextVideoIndex);
+        var position =
+            remaining == 0
+                ? "本页已完成"
+                : $"下一位置 第{pageNumber}页第{nextVideoIndex + 1}条，本页剩余 {remaining} 个";
+        return $"【配置UP】{upId} 第{pageNumber}页汇总：本段接口检查 {checkedThisSegment} 个，历史跳过 {historicalTerminalSkipped} 个，新确认已投币 {alreadyDonated} 个，{position}";
+    }
+
     private static string GetSourceName(DonateCoinVideoSource source)
     {
         return source switch

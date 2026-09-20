@@ -58,10 +58,13 @@ public sealed class DonateCoinSelectionBehaviorTest
             Assert.Contains("【视频来源】配置UP", logger.Messages);
             Assert.Contains(
                 logger.Messages,
-                x => x.Contains("【配置UP】487417170：已记录 0 / 当前视频 3")
+                x => x.Contains("【配置UP】487417170：历史终态 0 / 当前视频 3")
             );
             Assert.Contains(logger.Messages, x => x.Contains("扫描进行中"));
-            Assert.Contains("跳过候选视频 Av100：已投过1枚硬币", logger.Messages);
+            Assert.DoesNotContain(
+                logger.Messages,
+                message => message.Contains("跳过候选视频 Av100：已投过1枚硬币")
+            );
             Assert.True(
                 logger.Messages.IndexOf("【视频】video-101")
                     < logger.Messages.IndexOf("【视频】video-102")
@@ -72,6 +75,19 @@ public sealed class DonateCoinSelectionBehaviorTest
             Assert.Contains(101, accountState.BlacklistedAids);
             Assert.Contains(102, accountState.BlacklistedAids);
             Assert.Equal(3, accountState.ConfigUpProgressByUpId[487417170].RecordedVideoCount);
+            Assert.Equal(3, accountState.ConfigUpProgressByUpId[487417170].RecordedAids.Count);
+            Assert.DoesNotContain(
+                logger.Messages,
+                message => message.Contains("已在投币进度中记录")
+            );
+            Assert.Contains(logger.Messages, message => message.Contains("页汇总：本段接口检查"));
+            var configUpProgressMessages = logger
+                .Messages.Where(message => message.StartsWith("【配置UP】487417170：历史终态"))
+                .ToList();
+            Assert.Equal(
+                configUpProgressMessages.Count,
+                configUpProgressMessages.Distinct().Count()
+            );
         }
         finally
         {
@@ -79,6 +95,285 @@ public sealed class DonateCoinSelectionBehaviorTest
             {
                 Directory.Delete(tempDirectory, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldAggregateConfiguredUpTerminalVideosPerPage()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            var logger = new ListLogger<DonateCoinDomainService>();
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable
+                    .Range(1, 30)
+                    .Reverse()
+                    .Select(aid => CreateVideo(aid, $"video-{aid}"))
+                    .ToList()
+            );
+            var videoApi = new FakeVideoApi();
+            foreach (var aid in Enumerable.Range(1, 30))
+            {
+                videoApi.SetDonatedCoins(aid, 1);
+            }
+
+            var service = CreateDomainService(
+                logger,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                videoApi,
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.DoesNotContain(
+                logger.Messages,
+                message => message.StartsWith("跳过候选视频 Av")
+            );
+            Assert.Contains(
+                "【配置UP】1 第1页汇总：本段接口检查 30 个，历史跳过 0 个，新确认已投币 30 个，本页已完成",
+                logger.Messages
+            );
+            Assert.Equal(
+                2,
+                logger.Messages.Count(message => message.StartsWith("【配置UP】1：历史终态"))
+            );
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldNotCountHistoricalBlacklistAsNewStatusChecks()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            var logger = new ListLogger<DonateCoinDomainService>();
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            foreach (var aid in Enumerable.Range(1, 30))
+            {
+                await stateStore.MarkVideoAsBlacklistedAsync("10001", aid);
+            }
+
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable
+                    .Range(1, 30)
+                    .Reverse()
+                    .Select(aid => CreateVideo(aid, $"video-{aid}"))
+                    .ToList()
+            );
+            var service = CreateDomainService(
+                logger,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Contains(
+                "【配置UP】1 第1页汇总：本段接口检查 0 个，历史跳过 30 个，新确认已投币 0 个，本页已完成",
+                logger.Messages
+            );
+            var progress = (await stateStore.GetAccountStateAsync("10001")).ConfigUpProgressByUpId[
+                1
+            ];
+            Assert.Equal(0, progress.RecordedVideoCount);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldPersistPagePositionAfterSuccessfulCoin()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videos = new List<UpVideoInfo>
+            {
+                CreateVideo(12, "video-12"),
+                CreateVideo(11, "video-11"),
+                CreateVideo(10, "video-10"),
+            };
+            var firstVideoService = new FakeVideoDomainService();
+            firstVideoService.SetConfigUpVideos(1, videos);
+            var firstLogger = new ListLogger<DonateCoinDomainService>();
+            var firstService = CreateDomainService(
+                firstLogger,
+                stateStore,
+                firstVideoService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await firstService.AddCoinsForVideos(CreateCookie("10001"));
+
+            var afterFirstRun = (
+                await stateStore.GetAccountStateAsync("10001")
+            ).ConfigUpProgressByUpId[1];
+            Assert.Equal(1, afterFirstRun.NextVideoIndex);
+
+            var secondVideoService = new FakeVideoDomainService();
+            secondVideoService.SetConfigUpVideos(1, videos);
+            var secondLogger = new ListLogger<DonateCoinDomainService>();
+            var secondService = CreateDomainService(
+                secondLogger,
+                stateStore,
+                secondVideoService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await secondService.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Contains("【视频】video-11", secondLogger.Messages);
+            Assert.DoesNotContain(
+                secondLogger.Messages,
+                message => message.Contains("Av10：已在投币进度中记录")
+            );
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldPersistPagePositionAfterTerminalBatchBeforeFailure()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable
+                    .Range(10, 5)
+                    .Reverse()
+                    .Select(aid => CreateVideo(aid, $"video-{aid}"))
+                    .ToList()
+            );
+            var videoApi = new FakeVideoApi { FailingCoinStatusAid = 14 };
+            foreach (var aid in Enumerable.Range(10, 4))
+            {
+                videoApi.SetDonatedCoins(aid, 1);
+            }
+            var service = CreateDomainService(
+                NullLogger<DonateCoinDomainService>.Instance,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                videoApi,
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            var progress = (await stateStore.GetAccountStateAsync("10001")).ConfigUpProgressByUpId[
+                1
+            ];
+            Assert.Equal(DonateCoinConfigUpScanStatus.RetryableFailure, progress.Status);
+            Assert.Equal(4, progress.NextVideoIndex);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldNotRepeatConfirmedExhaustedUpWithinCurrentRun()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            var logger = new ListLogger<DonateCoinDomainService>();
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            await stateStore.MarkVideoAsBlacklistedAsync("10001", 10);
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(1, [CreateVideo(10, "video-10")]);
+            videoDomainService.SetConfigUpVideos(
+                2,
+                [CreateVideo(21, "video-21"), CreateVideo(20, "video-20")]
+            );
+            var service = CreateDomainService(
+                logger,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1,2",
+                2
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Equal(
+                1,
+                videoDomainService.RequestedConfigUpPageDetails.Count(request =>
+                    request.UpId == 1 && request.PageNumber == 1
+                )
+            );
+            Assert.Equal(
+                1,
+                logger.Messages.Count(message =>
+                    message.Contains("【配置UP】1：") && message.Contains("已确认无可投视频")
+                )
+            );
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
         }
     }
 
@@ -183,6 +478,47 @@ public sealed class DonateCoinSelectionBehaviorTest
     }
 
     [Fact]
+    public async Task FollowingApiFailures_ShouldKeepBusinessCodesInSourceLogs()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var logger = new ListLogger<DonateCoinDomainService>();
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "donate-coin-state.json")
+            );
+            var relationApi = new FakeRelationApi
+            {
+                SpecialFollowingCode = 1001,
+                FollowingCode = 1002,
+            };
+            var videoDomainService = new FakeVideoDomainService
+            {
+                RankingException = new InvalidOperationException("无排行榜候选"),
+            };
+            var service = CreateDomainService(
+                logger,
+                stateStore,
+                videoDomainService,
+                relationApi,
+                new FakeVideoApi(),
+                supportUpIds: "",
+                numberOfCoins: 1
+            );
+
+            Assert.Null(await service.TryGetCanDonatedVideo(CreateCookie("10001")));
+            Assert.Contains(logger.Messages, x => x.Contains("获取特别关注列表失败：1001"));
+            Assert.Contains(logger.Messages, x => x.Contains("获取关注列表失败：1002"));
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task AddCoinsForVideos_ShouldSkipCoinWhenUpFriendlyWatchFails()
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -214,6 +550,578 @@ public sealed class DonateCoinSelectionBehaviorTest
         finally
         {
             Directory.Delete(tempDirectory, true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldNotAdvancePage_WhenCoinStatusCheckFails()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(1, [CreateVideo(10, "video-10")]);
+            var videoApi = new FakeVideoApi
+            {
+                CoinStatusException = new InvalidOperationException("状态检查失败"),
+            };
+            var logger = new ListLogger<DonateCoinDomainService>();
+            var service = CreateDomainService(
+                logger,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                videoApi,
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            var progress = (await stateStore.GetAccountStateAsync("10001")).ConfigUpProgressByUpId[
+                1
+            ];
+            Assert.Equal([1], videoDomainService.RequestedConfigUpPages);
+            Assert.Equal(1, progress.NextPageNumber);
+            Assert.Equal(DonateCoinConfigUpScanStatus.RetryableFailure, progress.Status);
+            Assert.NotNull(progress.FailureReason);
+            Assert.DoesNotContain("可投视频不足，结束", logger.Messages);
+            Assert.Contains(
+                logger.Messages,
+                message => message.Contains("视频扫描异常") && message.Contains("等待下次重试")
+            );
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldNotAdvancePage_WhenExpectedPageIsEmpty()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService { ReturnEmptyConfigUpPages = true };
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable.Range(1, 31).Select(aid => CreateVideo(aid, $"video-{aid}")).ToList()
+            );
+            var service = CreateDomainService(
+                new ListLogger<DonateCoinDomainService>(),
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            var progress = (await stateStore.GetAccountStateAsync("10001")).ConfigUpProgressByUpId[
+                1
+            ];
+            Assert.Equal([2], videoDomainService.RequestedConfigUpPages);
+            Assert.Equal(2, progress.NextPageNumber);
+            Assert.Equal(DonateCoinConfigUpScanStatus.RetryableFailure, progress.Status);
+            Assert.NotNull(progress.FailureReason);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldNotAdvancePage_WhenPageRequestThrows()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService
+            {
+                ConfigUpPageException = new InvalidOperationException("取页失败"),
+            };
+            videoDomainService.SetConfigUpVideos(1, [CreateVideo(10, "video-10")]);
+            var service = CreateDomainService(
+                new ListLogger<DonateCoinDomainService>(),
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            var progress = (await stateStore.GetAccountStateAsync("10001")).ConfigUpProgressByUpId[
+                1
+            ];
+            Assert.Equal([1], videoDomainService.RequestedConfigUpPages);
+            Assert.Equal(1, progress.NextPageNumber);
+            Assert.Equal(DonateCoinConfigUpScanStatus.RetryableFailure, progress.Status);
+            Assert.NotNull(progress.FailureReason);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldConfirmExhausted_WhenAll126VideosAreBlacklisted()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService
+            {
+                RankingException = new InvalidOperationException("无排行榜候选"),
+            };
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable.Range(1, 126).Select(aid => CreateVideo(aid, $"video-{aid}")).ToList()
+            );
+            foreach (var aid in Enumerable.Range(1, 126))
+            {
+                await stateStore.MarkVideoAsBlacklistedAsync("10001", aid);
+            }
+
+            var service = CreateDomainService(
+                new ListLogger<DonateCoinDomainService>(),
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            var progress = (await stateStore.GetAccountStateAsync("10001")).ConfigUpProgressByUpId[
+                1
+            ];
+            Assert.Equal([5, 4, 3, 2, 1], videoDomainService.RequestedConfigUpPages);
+            Assert.Equal(0, progress.NextPageNumber);
+            Assert.Equal(DonateCoinConfigUpScanStatus.ConfirmedExhausted, progress.Status);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AddCoinsForVideos_ShouldRetryUnknownLegacyStateConservatively()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateFilePath = Path.Combine(tempDirectory, "state.json");
+            await File.WriteAllTextAsync(
+                stateFilePath,
+                $$"""
+                {
+                  "accounts": {
+                    "10001": {
+                      "blacklistedAids": [10],
+                      "configUpProgressByUpId": {
+                        "1": {
+                          "videoCount": 1,
+                          "videoCountUpdatedOn": "{{DateOnly.FromDateTime(
+                    DateTime.Now
+                ):yyyy-MM-dd}}",
+                          "nextPageNumber": 0,
+                          "recordedVideoCount": 1
+                        }
+                      }
+                    }
+                  }
+                }
+                """
+            );
+
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                stateFilePath
+            );
+            var videoDomainService = new FakeVideoDomainService
+            {
+                RankingException = new InvalidOperationException("无排行榜候选"),
+            };
+            videoDomainService.SetConfigUpVideos(1, [CreateVideo(10, "video-10")]);
+            var service = CreateDomainService(
+                new ListLogger<DonateCoinDomainService>(),
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            var progress = (await stateStore.GetAccountStateAsync("10001")).ConfigUpProgressByUpId[
+                1
+            ];
+            Assert.Equal([1], videoDomainService.RequestedConfigUpPages);
+            Assert.Equal(DonateCoinConfigUpScanStatus.ConfirmedExhausted, progress.Status);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CrossDayConfirmedExhausted_ShouldOnlyScanNewVideoRange()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable.Range(1, 130).Select(x => CreateVideo(x, $"video-{x}")).ToList()
+            );
+            await stateStore.UpdateConfigUpProgressAsync(
+                "10001",
+                1,
+                new DonateCoinConfigUpProgressSnapshot(
+                    126,
+                    DateOnly.FromDateTime(DateTime.Now.AddDays(-1)),
+                    0,
+                    126,
+                    DonateCoinConfigUpScanStatus.ConfirmedExhausted
+                )
+            );
+
+            var service = CreateDomainService(
+                NullLogger<DonateCoinDomainService>.Instance,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Equal([1], videoDomainService.RequestedConfigUpPages);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CrossDayConfirmedExhausted_ShouldProbeNewestPage_WhenCountIsUnchanged()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable.Range(1, 126).Select(x => CreateVideo(x, $"video-{x}")).ToList()
+            );
+            var recordedAids = Enumerable.Range(1, 126).Select(x => (long)x).ToHashSet();
+            foreach (var aid in recordedAids)
+            {
+                await stateStore.MarkVideoAsBlacklistedAsync("10001", aid);
+            }
+            await stateStore.UpdateConfigUpProgressAsync(
+                "10001",
+                1,
+                new DonateCoinConfigUpProgressSnapshot(
+                    126,
+                    DateOnly.FromDateTime(DateTime.Now.AddDays(-1)),
+                    0,
+                    126,
+                    DonateCoinConfigUpScanStatus.ConfirmedExhausted,
+                    RecordedAids: recordedAids
+                )
+            );
+
+            var service = CreateDomainService(
+                NullLogger<DonateCoinDomainService>.Instance,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Equal([1], videoDomainService.RequestedConfigUpPages);
+            var progress = (await stateStore.GetAccountStateAsync("10001")).ConfigUpProgressByUpId[
+                1
+            ];
+            Assert.Equal(DateOnly.FromDateTime(DateTime.Now), progress.VideoCountUpdatedOn);
+            Assert.Equal(DonateCoinConfigUpScanStatus.ConfirmedExhausted, progress.Status);
+            Assert.Equal(0, progress.NextPageNumber);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CrossDayConfirmedExhausted_ShouldFindReplacementVideo_WhenCountIsUnchanged()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var previousAids = Enumerable.Range(1, 30).Select(x => (long)x).ToHashSet();
+            foreach (var aid in previousAids)
+            {
+                await stateStore.MarkVideoAsBlacklistedAsync("10001", aid);
+            }
+            await stateStore.UpdateConfigUpProgressAsync(
+                "10001",
+                1,
+                new DonateCoinConfigUpProgressSnapshot(
+                    30,
+                    DateOnly.FromDateTime(DateTime.Now.AddDays(-1)),
+                    0,
+                    30,
+                    DonateCoinConfigUpScanStatus.ConfirmedExhausted,
+                    RecordedAids: previousAids
+                )
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                [
+                    CreateVideo(31, "replacement-31"),
+                    .. Enumerable.Range(2, 29).Select(x => CreateVideo(x, $"video-{x}")),
+                ]
+            );
+            var videoApi = new FakeVideoApi();
+            var service = CreateDomainService(
+                NullLogger<DonateCoinDomainService>.Instance,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                videoApi,
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Equal([1], videoDomainService.RequestedConfigUpPages);
+            Assert.Contains(31, videoApi.AddedCoinAids);
+            var account = await stateStore.GetAccountStateAsync("10001");
+            Assert.Contains(31, account.BlacklistedAids);
+            Assert.Contains(31, account.ConfigUpProgressByUpId[1].RecordedAids);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CrossDayConfirmedExhausted_ShouldRescanWhenVideoCountDecreases()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable.Range(1, 125).Select(x => CreateVideo(x, $"video-{x}")).ToList()
+            );
+            await stateStore.UpdateConfigUpProgressAsync(
+                "10001",
+                1,
+                new DonateCoinConfigUpProgressSnapshot(
+                    126,
+                    DateOnly.FromDateTime(DateTime.Now.AddDays(-1)),
+                    0,
+                    126,
+                    DonateCoinConfigUpScanStatus.ConfirmedExhausted
+                )
+            );
+
+            var service = CreateDomainService(
+                NullLogger<DonateCoinDomainService>.Instance,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Equal([5], videoDomainService.RequestedConfigUpPages);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(DonateCoinConfigUpScanStatus.Unknown)]
+    [InlineData(DonateCoinConfigUpScanStatus.InProgress)]
+    [InlineData(DonateCoinConfigUpScanStatus.RetryableFailure)]
+    public async Task CrossDayNonTerminalState_ShouldUseFullCurrentRange(
+        DonateCoinConfigUpScanStatus status
+    )
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable.Range(1, 126).Select(x => CreateVideo(x, $"video-{x}")).ToList()
+            );
+            foreach (var aid in Enumerable.Range(1, 126))
+                await stateStore.MarkVideoAsBlacklistedAsync("10001", aid);
+            await stateStore.UpdateConfigUpProgressAsync(
+                "10001",
+                1,
+                new DonateCoinConfigUpProgressSnapshot(
+                    126,
+                    DateOnly.FromDateTime(DateTime.Now.AddDays(-1)),
+                    1,
+                    0,
+                    status
+                )
+            );
+
+            var service = CreateDomainService(
+                NullLogger<DonateCoinDomainService>.Instance,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Equal([5, 4, 3, 2, 1], videoDomainService.RequestedConfigUpPages);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(DonateCoinConfigUpScanStatus.InProgress)]
+    [InlineData(DonateCoinConfigUpScanStatus.RetryableFailure)]
+    public async Task SameDayNonTerminalZeroCursor_ShouldRestartCurrentRange(
+        DonateCoinConfigUpScanStatus status
+    )
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            var stateStore = new DonateCoinSelectionStateStore(
+                NullLogger<DonateCoinSelectionStateStore>.Instance,
+                Path.Combine(tempDirectory, "donate-coin-state.json")
+            );
+            var videoDomainService = new FakeVideoDomainService();
+            videoDomainService.SetConfigUpVideos(
+                1,
+                Enumerable.Range(1, 126).Select(x => CreateVideo(x, $"video-{x}")).ToList()
+            );
+            foreach (var aid in Enumerable.Range(1, 126))
+                await stateStore.MarkVideoAsBlacklistedAsync("10001", aid);
+            await stateStore.UpdateConfigUpProgressAsync(
+                "10001",
+                1,
+                new DonateCoinConfigUpProgressSnapshot(
+                    126,
+                    DateOnly.FromDateTime(DateTime.Now),
+                    0,
+                    126,
+                    status
+                )
+            );
+
+            var service = CreateDomainService(
+                NullLogger<DonateCoinDomainService>.Instance,
+                stateStore,
+                videoDomainService,
+                new FakeRelationApi(),
+                new FakeVideoApi(),
+                "1",
+                1
+            );
+
+            await service.AddCoinsForVideos(CreateCookie("10001"));
+
+            Assert.Equal([5, 4, 3, 2, 1], videoDomainService.RequestedConfigUpPages);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
         }
     }
 
@@ -315,8 +1223,12 @@ public sealed class DonateCoinSelectionBehaviorTest
         private readonly Dictionary<long, Queue<UpVideoInfo>> _randomVideos = [];
 
         public Exception? RankingException { get; set; }
+        public Exception? ConfigUpPageException { get; set; }
+        public bool ReturnEmptyConfigUpPages { get; set; }
         public bool WatchResult { get; set; } = true;
         public List<long> WatchedAids { get; } = [];
+        public List<int> RequestedConfigUpPages { get; } = [];
+        public List<(long UpId, int PageNumber)> RequestedConfigUpPageDetails { get; } = [];
 
         public void SetConfigUpVideos(long upId, List<UpVideoInfo> videos)
         {
@@ -375,6 +1287,18 @@ public sealed class DonateCoinSelectionBehaviorTest
             BiliCookie ck
         )
         {
+            RequestedConfigUpPages.Add(pageNumber);
+            RequestedConfigUpPageDetails.Add((upId, pageNumber));
+            if (ConfigUpPageException != null)
+            {
+                throw ConfigUpPageException;
+            }
+
+            if (ReturnEmptyConfigUpPages)
+            {
+                return Task.FromResult<IReadOnlyList<UpVideoInfo>>([]);
+            }
+
             if (!_configUpVideos.TryGetValue(upId, out var videos))
             {
                 return Task.FromResult<IReadOnlyList<UpVideoInfo>>([]);
@@ -445,6 +1369,9 @@ public sealed class DonateCoinSelectionBehaviorTest
     {
         private readonly List<long> _followings = [];
 
+        public int SpecialFollowingCode { get; set; }
+        public int FollowingCode { get; set; }
+
         public void SetFollowings(List<long> followings)
         {
             _followings.Clear();
@@ -459,14 +1386,17 @@ public sealed class DonateCoinSelectionBehaviorTest
             return Task.FromResult(
                 new BiliApiResponse<GetFollowingsResponse>
                 {
-                    Code = 0,
-                    Data = new GetFollowingsResponse
-                    {
-                        Total = _followings.Count,
-                        List = _followings
-                            .Select(mid => new UpInfo { Mid = mid, Uname = $"up-{mid}" })
-                            .ToList(),
-                    },
+                    Code = FollowingCode,
+                    Data =
+                        FollowingCode == 0
+                            ? new GetFollowingsResponse
+                            {
+                                Total = _followings.Count,
+                                List = _followings
+                                    .Select(mid => new UpInfo { Mid = mid, Uname = $"up-{mid}" })
+                                    .ToList(),
+                            }
+                            : null,
                 }
             );
         }
@@ -476,7 +1406,13 @@ public sealed class DonateCoinSelectionBehaviorTest
             string ck
         )
         {
-            return Task.FromResult(new BiliApiResponse<List<UpInfo>> { Code = 0, Data = [] });
+            return Task.FromResult(
+                new BiliApiResponse<List<UpInfo>>
+                {
+                    Code = SpecialFollowingCode,
+                    Data = SpecialFollowingCode == 0 ? [] : null,
+                }
+            );
         }
 
         public Task<BiliApiResponse<List<TagDto>>> GetTags(
@@ -519,13 +1455,19 @@ public sealed class DonateCoinSelectionBehaviorTest
     {
         private readonly Dictionary<long, int> _donatedCoins = [];
         public List<long> AddedCoinAids { get; } = [];
+        public Exception? CoinStatusException { get; set; }
+        public long? FailingCoinStatusAid { get; set; }
 
         public void SetDonatedCoins(long aid, int multiply)
         {
             _donatedCoins[aid] = multiply;
         }
 
-        public Task<BiliApiResponse> ShareVideo(ShareVideoRequest request, string ck)
+        public Task<BiliApiResponse> ShareVideo(
+            ShareVideoRequest request,
+            string ck,
+            string referer
+        )
         {
             throw new NotImplementedException();
         }
@@ -554,6 +1496,16 @@ public sealed class DonateCoinSelectionBehaviorTest
             string ck
         )
         {
+            if (CoinStatusException != null)
+            {
+                throw CoinStatusException;
+            }
+
+            if (FailingCoinStatusAid == request.Aid)
+            {
+                throw new InvalidOperationException("指定视频状态检查失败");
+            }
+
             var multiply = _donatedCoins.TryGetValue(request.Aid, out var value) ? value : 0;
             return Task.FromResult(
                 new BiliApiResponse<DonatedCoinsForVideo>

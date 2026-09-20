@@ -56,4 +56,42 @@ public class DonateCoinDomainServiceTest
             message
         );
     }
+
+    [Fact]
+    public void ConfigUpStatusMessages_ShouldDescribeTheScanState()
+    {
+        Assert.Equal("已确认无可投视频", DonateCoinLogFormatter.BuildConfigUpConfirmedExhausted());
+        Assert.Equal(
+            "扫描中断，保留当前页待重试",
+            DonateCoinLogFormatter.BuildConfigUpRetryableFailure()
+        );
+        Assert.Equal("扫描进行中", DonateCoinLogFormatter.BuildConfigUpInProgress());
+    }
+
+    [Fact]
+    public void ConfigUpStatusMessages_ShouldNotUseCompletedWordingForRetryableStates()
+    {
+        Assert.DoesNotContain("已看完", DonateCoinLogFormatter.BuildConfigUpRetryableFailure());
+        Assert.DoesNotContain("已看完", DonateCoinLogFormatter.BuildConfigUpInProgress());
+    }
+
+    [Fact]
+    public void BuildConfigUpProgress_ShouldSeparateHistoricalAndCurrentRunProgress()
+    {
+        var message = DonateCoinLogFormatter.BuildConfigUpProgress(
+            487417170,
+            historicalTerminalCount: 125,
+            videoCount: 128,
+            statusChecksThisRun: 3,
+            pageNumber: 5,
+            nextVideoIndex: 7,
+            DonateCoinLogFormatter.BuildConfigUpInProgress()
+        );
+
+        Assert.Equal(
+            "【配置UP】487417170：历史终态 125 / 当前视频 128，本轮接口检查 3，位置 第5页第8条，扫描进行中",
+            message
+        );
+        Assert.DoesNotContain("已记录", message);
+    }
 }

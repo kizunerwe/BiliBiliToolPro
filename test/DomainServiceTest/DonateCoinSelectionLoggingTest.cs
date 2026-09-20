@@ -62,6 +62,15 @@ public class DonateCoinSelectionLoggingTest
         );
     }
 
+    [Fact]
+    public void BuildConfigUpPageSummary_ShouldDescribeCompletedPageWithoutOutOfRangeIndex()
+    {
+        var message = DonateCoinLogFormatter.BuildConfigUpPageSummary(1, 1, 30, 0, 30, 30, 30);
+
+        Assert.Contains("本页已完成", message);
+        Assert.DoesNotContain("第31条", message);
+    }
+
     private sealed class FakeFavoriteDomainService : IFavoriteDomainService
     {
         public Task<long?> GetOrCreateFolderAsync(
@@ -234,7 +243,11 @@ public class DonateCoinSelectionLoggingTest
 
     private sealed class FakeVideoApi : IVideoApi
     {
-        public Task<BiliApiResponse> ShareVideo(ShareVideoRequest request, string ck)
+        public Task<BiliApiResponse> ShareVideo(
+            ShareVideoRequest request,
+            string ck,
+            string referer
+        )
         {
             throw new NotImplementedException();
         }
