@@ -5,6 +5,9 @@ on:
     paths:
       - "qinglong/**"
       - "scripts/test-qinglong-base.sh"
+      - "scripts/test-qinglong-schedules.sh"
+      - "scripts/test-qinglong-lock.sh"
+      - "scripts/test-qinglong-lifecycle.sh"
       - "src/Ray.BiliBiliTool.Console/**"
       - "src/Ray.BiliBiliTool.Application/**"
       - "src/Ray.BiliBiliTool.Application.Contracts/**"
@@ -13,12 +16,16 @@ on:
       - "src/Ray.BiliBiliTool.Config/**"
       - "src/Ray.BiliBiliTool.Infrastructure/**"
       - "test/DomainServiceTest/**"
+      - "test/ConfigTest/**"
       - "test/InfrastructureTest/**"
       - ".github/workflows/qinglong-verify.yml"
   pull_request:
     paths:
       - "qinglong/**"
       - "scripts/test-qinglong-base.sh"
+      - "scripts/test-qinglong-schedules.sh"
+      - "scripts/test-qinglong-lock.sh"
+      - "scripts/test-qinglong-lifecycle.sh"
       - "src/Ray.BiliBiliTool.Console/**"
       - "src/Ray.BiliBiliTool.Application/**"
       - "src/Ray.BiliBiliTool.Application.Contracts/**"
@@ -27,6 +34,7 @@ on:
       - "src/Ray.BiliBiliTool.Config/**"
       - "src/Ray.BiliBiliTool.Infrastructure/**"
       - "test/DomainServiceTest/**"
+      - "test/ConfigTest/**"
       - "test/InfrastructureTest/**"
       - ".github/workflows/qinglong-verify.yml"
 
@@ -47,7 +55,15 @@ jobs:
         run: dotnet build src/Ray.BiliBiliTool.Console/Ray.BiliBiliTool.Console.csproj -c Release --no-restore
       - name: Stable domain tests
         run: dotnet test test/DomainServiceTest/DomainServiceTest.csproj -c Release --filter "Category!=External" -- xunit.parallelizeTestCollections=false
+      - name: Charge configuration contract tests
+        run: dotnet test test/ConfigTest/ConfigTest.csproj -c Release --filter "FullyQualifiedName~ChargeConfigurationContractTest"
       - name: Infrastructure tests
         run: dotnet test test/InfrastructureTest/InfrastructureTest.csproj -c Release
       - name: QingLong shell checks
         run: bash scripts/test-qinglong-base.sh
+      - name: QingLong schedule checks
+        run: bash scripts/test-qinglong-schedules.sh
+      - name: QingLong lock checks
+        run: bash scripts/test-qinglong-lock.sh
+      - name: QingLong lifecycle checks
+        run: bash scripts/test-qinglong-lifecycle.sh
