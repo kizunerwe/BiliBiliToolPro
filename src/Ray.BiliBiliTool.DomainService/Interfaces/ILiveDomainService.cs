@@ -32,15 +32,24 @@ public interface ILiveDomainService : IDomainService
     /// <summary>
     /// 发送弹幕
     /// </summary>
-    Task<TaskStepResult> SendDanmakuToFansMedalLive(BiliCookie ck);
+    Task<TaskStepResult> SendDanmakuToFansMedalLive(
+        BiliCookie ck,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// 直播时长挂机
     /// </summary>
-    Task<TaskStepResult> SendHeartBeatToFansMedalLive(BiliCookie ck);
+    Task<TaskStepResult> SendHeartBeatToFansMedalLive(
+        BiliCookie ck,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// 点赞直播间
     /// </summary>
-    Task<TaskStepResult> LikeFansMedalLive(BiliCookie ck);
+    Task<TaskStepResult> LikeFansMedalLive(
+        BiliCookie ck,
+        CancellationToken cancellationToken = default
+    );
 }

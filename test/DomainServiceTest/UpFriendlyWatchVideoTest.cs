@@ -205,8 +205,11 @@ public sealed class UpFriendlyWatchVideoTest
             );
         }
 
-        public Task<BiliApiResponse> ShareVideo(ShareVideoRequest request, string ck) =>
-            throw new NotImplementedException();
+        public Task<BiliApiResponse> ShareVideo(
+            ShareVideoRequest request,
+            string ck,
+            string referer
+        ) => throw new NotImplementedException();
 
         public Task<BiliApiResponse> AddCoinForVideo(
             AddCoinRequest request,
@@ -253,8 +256,11 @@ public sealed class UpFriendlyWatchVideoTest
         public Task<BiliApiResponse<List<RankingInfo>>> GetRegionRankingVideos(int rid, int day) =>
             throw new NotImplementedException();
 #pragma warning restore CS0612
-        public Task<BiliApiResponse> ShareVideo(ShareVideoRequest request, string ck) =>
-            throw new NotImplementedException();
+        public Task<BiliApiResponse> ShareVideo(
+            ShareVideoRequest request,
+            string ck,
+            string referer
+        ) => throw new NotImplementedException();
 
         public Task<BiliApiResponse> UploadVideoHeartbeat(
             UploadVideoHeartbeatRequest request,

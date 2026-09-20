@@ -69,3 +69,15 @@ public interface IVideoDomainService : IDomainService
     /// <param name="dailyTaskStatus"></param>
     Task ShareVideo(VideoInfoDto videoInfo, BiliCookie ck);
 }
+
+/// <summary>
+/// 支持取消观看和分享流程的视频服务扩展接口。
+/// </summary>
+public interface ICancellableVideoDomainService
+{
+    Task<TaskStepResult> WatchAndShareVideo(
+        DailyTaskInfo dailyTaskStatus,
+        BiliCookie ck,
+        CancellationToken cancellationToken
+    );
+}

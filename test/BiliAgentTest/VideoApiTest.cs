@@ -18,7 +18,7 @@ public class VideoApiTest
     }
 
     [Fact]
-    public void GetLiveWalletStatus_Normal_Success()
+    public async Task GetLiveWalletStatus_Normal_Success()
     {
         using var scope = Global.ServiceProviderRoot.CreateScope();
 
@@ -26,7 +26,7 @@ public class VideoApiTest
         var api = scope.ServiceProvider.GetRequiredService<IVideoApi>();
 
         var req = new GetAlreadyDonatedCoinsRequest(248097491);
-        BiliApiResponse<DonatedCoinsForVideo>? re = api.GetDonatedCoinsForVideo(req, null).Result;
+        BiliApiResponse<DonatedCoinsForVideo>? re = await api.GetDonatedCoinsForVideo(req, null);
 
         if (ck.Count > 0)
         {

@@ -37,6 +37,35 @@ public sealed class FavoriteDomainServiceTest
     }
 
     [Fact]
+    public async Task NullFolderList_ShouldBeTreatedAsEmptyAndCreateOnce()
+    {
+        var api = new FakeFavoriteApi();
+        api.FolderLists.Enqueue(new FavoriteFolderListResponse { List = null });
+        api.FolderLists.Enqueue(Folders((34, "专用收藏夹")));
+        var service = new FavoriteDomainService(new ListLogger<FavoriteDomainService>(), api);
+
+        var folderId = await service.GetOrCreateFolderAsync("专用收藏夹", CreateCookie("10006"));
+
+        Assert.Equal(34, folderId);
+        Assert.Single(api.CreateRequests);
+    }
+
+    [Fact]
+    public async Task MissingFolderData_ShouldReturnNullWithoutCreating()
+    {
+        var api = new FakeFavoriteApi();
+        api.ReturnMissingData = true;
+        var logger = new ListLogger<FavoriteDomainService>();
+        var service = new FavoriteDomainService(logger, api);
+
+        var folderId = await service.GetOrCreateFolderAsync("专用收藏夹", CreateCookie("10007"));
+
+        Assert.Null(folderId);
+        Assert.Empty(api.CreateRequests);
+        Assert.Contains(logger.Messages, message => message.Contains("获取收藏夹列表失败"));
+    }
+
+    [Fact]
     public async Task GetOrCreateFolderAsync_ShouldFailWhenDuplicateNamesExist()
     {
         var logger = new ListLogger<FavoriteDomainService>();
@@ -113,7 +142,8 @@ public sealed class FavoriteDomainServiceTest
 
     private sealed class FakeFavoriteApi : IFavoriteApi
     {
-        public Queue<FavoriteFolderListResponse> FolderLists { get; } = new();
+        public Queue<FavoriteFolderListResponse?> FolderLists { get; } = new();
+        public bool ReturnMissingData { get; set; }
         public List<GetFavoriteFoldersRequest> ListRequests { get; } = [];
         public List<CreateFavoriteFolderRequest> CreateRequests { get; } = [];
         public List<DealFavoriteResourceRequest> DealRequests { get; } = [];
@@ -129,7 +159,7 @@ public sealed class FavoriteDomainServiceTest
                 new BiliApiResponse<FavoriteFolderListResponse>
                 {
                     Code = 0,
-                    Data = FolderLists.Dequeue(),
+                    Data = ReturnMissingData ? null : FolderLists.Dequeue(),
                 }
             );
         }

@@ -26,9 +26,13 @@ public class LiveDomainService(
     IOptionsMonitor<LiveFansMedalTaskOptions> liveFansMedalTaskOptions,
     IOptionsMonitor<SecurityOptions> securityOptions,
     IOptionsMonitor<Silver2CoinTaskOptions> silver2CoinTaskOptions,
-    IUpInfoApi upInfoApi
+    IUpInfoApi upInfoApi,
+    ITaskDelay taskDelay
 ) : ILiveDomainService
 {
+    private const int MaxHeartBeatChainRebuilds = 2;
+    private const int MinHeartBeatIntervalSeconds = 1;
+    private const int MaxHeartBeatIntervalSeconds = 300;
     private readonly LiveLotteryTaskOptions _liveLotteryTaskOptions =
         liveLotteryTaskOptions.CurrentValue;
     private readonly LiveFansMedalTaskOptions _liveFansMedalTaskOptions =
@@ -446,11 +450,18 @@ public class LiveDomainService(
 
     #endregion
 
-    public async Task<TaskStepResult> SendDanmakuToFansMedalLive(BiliCookie ck)
+    public async Task<TaskStepResult> SendDanmakuToFansMedalLive(
+        BiliCookie ck,
+        CancellationToken cancellationToken = default
+    )
     {
         try
         {
-            return await SendDanmakuToFansMedalLiveCoreAsync(ck);
+            return await SendDanmakuToFansMedalLiveCoreAsync(ck, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -459,7 +470,10 @@ public class LiveDomainService(
         }
     }
 
-    private async Task<TaskStepResult> SendDanmakuToFansMedalLiveCoreAsync(BiliCookie ck)
+    private async Task<TaskStepResult> SendDanmakuToFansMedalLiveCoreAsync(
+        BiliCookie ck,
+        CancellationToken cancellationToken
+    )
     {
         if (!await CheckLiveCookie(ck))
             return TaskStepResult.Fail("直播 Cookie 不可用");
@@ -478,6 +492,7 @@ public class LiveDomainService(
 
         foreach (var info in infoList)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var medal = info.MedalInfo;
 
             logger.LogInformation("【直播间】{liveRoomName}", medal.Target_name);
@@ -527,7 +542,7 @@ public class LiveDomainService(
                     successCount++;
 
                 var delay = new Random().Next(2000, 4000);
-                await Task.Delay(delay);
+                await taskDelay.Delay(TimeSpan.FromMilliseconds(delay), cancellationToken);
             }
 
             logger.LogInformation(
@@ -549,11 +564,18 @@ public class LiveDomainService(
             : TaskStepResult.Success();
     }
 
-    public async Task<TaskStepResult> SendHeartBeatToFansMedalLive(BiliCookie ck)
+    public async Task<TaskStepResult> SendHeartBeatToFansMedalLive(
+        BiliCookie ck,
+        CancellationToken cancellationToken = default
+    )
     {
         try
         {
-            return await SendHeartBeatToFansMedalLiveCoreAsync(ck);
+            return await SendHeartBeatToFansMedalLiveCoreAsync(ck, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -562,7 +584,10 @@ public class LiveDomainService(
         }
     }
 
-    private async Task<TaskStepResult> SendHeartBeatToFansMedalLiveCoreAsync(BiliCookie ck)
+    private async Task<TaskStepResult> SendHeartBeatToFansMedalLiveCoreAsync(
+        BiliCookie ck,
+        CancellationToken cancellationToken
+    )
     {
         if (!await CheckLiveCookie(ck))
             return TaskStepResult.Fail("直播 Cookie 不可用");
@@ -593,43 +618,62 @@ public class LiveDomainService(
         {
             foreach (var info in infoList)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 // 忽略连续失败超过上限的直播间
                 if (info.FailedTimes >= _liveFansMedalTaskOptions.HeartBeatSendGiveUpThreshold)
                     continue;
 
                 string uuid = Guid.NewGuid().ToString();
                 var current = Now();
-                if (
-                    current - info.LastBeatTime
-                    <= (LiveFansMedalTaskOptions.HeartBeatInterval + 5) * 1000
-                )
+                if (info.LastBeatTime > 0)
                 {
-                    int sleepTime = (int)(
-                        (LiveFansMedalTaskOptions.HeartBeatInterval + 5) * 1000
-                        - (current - info.LastBeatTime)
-                    );
-                    logger.LogDebug("【休眠】{time} 毫秒", sleepTime);
-                    Thread.Sleep(sleepTime);
+                    var elapsed = current - info.LastBeatTime;
+                    var waitMilliseconds = info.HeartBeatIntervalSeconds * 1000L - elapsed;
+                    if (waitMilliseconds > 0)
+                    {
+                        logger.LogDebug("【休眠】{time} 毫秒", waitMilliseconds);
+                        await taskDelay.Delay(
+                            TimeSpan.FromMilliseconds(waitMilliseconds),
+                            cancellationToken
+                        );
+                    }
                 }
 
                 // Heart Beat 接口
                 var timestamp = Now();
                 BiliApiResponse<HeartBeatResponse>? heartBeatResult = null;
-                if (info.HeartBeatCount == 0)
+                var isEnterRoom = info.ChainSequence == 0 || info.NeedsReenter;
+                if (isEnterRoom)
                 {
+                    if (info.NeedsReenter)
+                    {
+                        info.RebuildCount += 1;
+                        info.ChainSequence = 0;
+                        info.NeedsReenter = false;
+                        logger.LogWarning(
+                            "【心跳链】直播间 {room} 第 {rebuild}/{max} 次重新建立，总进度 {progress}",
+                            info.RoomId,
+                            info.RebuildCount,
+                            MaxHeartBeatChainRebuilds,
+                            info.HeartBeatCount
+                        );
+                    }
+
                     heartBeatResult = await liveTraceApi.EnterRoom(
                         new EnterRoomRequest(
                             info.RoomId,
                             info.RoomInfo.Parent_area_id,
                             info.RoomInfo.Area_id,
-                            info.HeartBeatCount,
+                            0,
                             timestamp,
                             _securityOptions.UserAgent,
                             ck.BiliJct,
                             info.RoomInfo.Uid,
                             $"[\"{ck.LiveBuvid}\",\"{uuid}\"]"
                         ),
-                        ck.ToString()
+                        ck.ToString(),
+                        cancellationToken
                     );
                 }
                 else
@@ -639,10 +683,11 @@ public class LiveDomainService(
                             info.RoomId,
                             info.RoomInfo.Parent_area_id,
                             info.RoomInfo.Area_id,
-                            info.HeartBeatCount,
+                            info.ChainSequence,
                             ck.LiveBuvid,
                             timestamp,
                             info.HeartBeatInfo.Timestamp,
+                            info.HeartBeatIntervalSeconds,
                             _securityOptions.UserAgent,
                             info.HeartBeatInfo.Secret_rule,
                             info.HeartBeatInfo.Secret_key!,
@@ -650,38 +695,50 @@ public class LiveDomainService(
                             uuid,
                             $"[\"{ck.LiveBuvid}\",\"{uuid}\"]"
                         ),
-                        ck.ToString()
+                        ck.ToString(),
+                        cancellationToken
                     );
                 }
 
                 info.LastBeatTime = Now();
 
-                if (
-                    heartBeatResult is null
-                    || heartBeatResult.Code != 0
-                    || heartBeatResult.Data is null
-                )
+                var hasValidChain = TryAdoptHeartBeatChain(info, heartBeatResult?.Data);
+
+                if (heartBeatResult is null || heartBeatResult.Code != 0 || !hasValidChain)
                 {
-                    logger.LogError("【心跳包】直播间 {room} 发送失败", info.RoomId);
                     logger.LogError(
-                        "【原因】{message}",
-                        heartBeatResult?.Message ?? heartBeatResult?.Code.ToString() ?? "无响应"
+                        "【心跳包】直播间 {room} 发送失败，业务码 {code}，总进度 {progress}，链序号 {sequence}，间隔 {interval} 秒",
+                        info.RoomId,
+                        heartBeatResult?.Code,
+                        info.HeartBeatCount,
+                        info.ChainSequence,
+                        info.HeartBeatIntervalSeconds
                     );
+                    logger.LogError("【原因】{message}", heartBeatResult?.Message ?? "无响应");
                     info.FailedTimes += 1;
+
+                    if (!hasValidChain && info.RebuildCount < MaxHeartBeatChainRebuilds)
+                    {
+                        info.NeedsReenter = true;
+                    }
+                    else if (!hasValidChain)
+                    {
+                        info.FailedTimes = _liveFansMedalTaskOptions.HeartBeatSendGiveUpThreshold;
+                    }
                     continue;
                 }
 
-                info.HeartBeatInfo.Secret_key = heartBeatResult.Data.Secret_key;
-                info.HeartBeatInfo.Secret_rule = heartBeatResult.Data.Secret_rule;
-                info.HeartBeatInfo.Timestamp = heartBeatResult.Data.Timestamp;
-
                 info.HeartBeatCount += 1;
+                info.ChainSequence += 1;
                 info.FailedTimes = 0;
+                info.NeedsReenter = false;
 
                 logger.LogInformation(
-                    "【直播间】{roomId} 的第 {index} 个心跳包发送成功",
+                    "【直播间】{roomId} 的第 {index} 个心跳包发送成功，链序号 {sequence}，间隔 {interval} 秒",
                     info.RoomId,
-                    info.HeartBeatCount
+                    info.HeartBeatCount,
+                    info.ChainSequence,
+                    info.HeartBeatIntervalSeconds
                 );
             }
         }
@@ -700,14 +757,50 @@ public class LiveDomainService(
             : TaskStepResult.Fail(infoResult.FailureReason ?? "直播心跳未完成目标");
     }
 
+    private static bool TryAdoptHeartBeatChain(
+        HeartBeatIterationInfoDto info,
+        HeartBeatResponse? response
+    )
+    {
+        if (
+            response is null
+            || string.IsNullOrWhiteSpace(response.Secret_key)
+            || response.Secret_rule.Count == 0
+            || response.Timestamp <= 0
+        )
+        {
+            return false;
+        }
+
+        info.HeartBeatInfo.Secret_key = response.Secret_key;
+        info.HeartBeatInfo.Secret_rule = response.Secret_rule;
+        info.HeartBeatInfo.Timestamp = response.Timestamp;
+        if (response.Heartbeat_interval > 0)
+        {
+            info.HeartBeatIntervalSeconds = Math.Clamp(
+                response.Heartbeat_interval,
+                MinHeartBeatIntervalSeconds,
+                MaxHeartBeatIntervalSeconds
+            );
+        }
+        return true;
+    }
+
     /// <summary>
     /// 点赞直播间
     /// </summary>
-    public async Task<TaskStepResult> LikeFansMedalLive(BiliCookie ck)
+    public async Task<TaskStepResult> LikeFansMedalLive(
+        BiliCookie ck,
+        CancellationToken cancellationToken = default
+    )
     {
         try
         {
-            return await LikeFansMedalLiveCoreAsync(ck);
+            return await LikeFansMedalLiveCoreAsync(ck, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -716,7 +809,10 @@ public class LiveDomainService(
         }
     }
 
-    private async Task<TaskStepResult> LikeFansMedalLiveCoreAsync(BiliCookie ck)
+    private async Task<TaskStepResult> LikeFansMedalLiveCoreAsync(
+        BiliCookie ck,
+        CancellationToken cancellationToken
+    )
     {
         if (!await CheckLiveCookie(ck))
             return TaskStepResult.Fail("直播 Cookie 不可用");
@@ -736,6 +832,7 @@ public class LiveDomainService(
         string? failureReason = infoResult.FailureReason;
         foreach (var info in infoList)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             // Clike_Time 暂时设置为等于设置的LikeNumber，不清楚是否会被风控，我自己抓包最大值为10
             var request = new LikeLiveRoomRequest(
                 info.RoomId,
@@ -759,7 +856,7 @@ public class LiveDomainService(
             }
 
             var delay = new Random().Next(5000, 8000);
-            await Task.Delay(delay);
+            await taskDelay.Delay(TimeSpan.FromMilliseconds(delay), cancellationToken);
         }
 
         return failed

@@ -13,6 +13,7 @@ public class HeartBeatRequest
         string buvid, // cookie['LIVE_BUVID']
         long timestamp,
         long ets, // 由后端返回的 timestamp
+        int intervalSeconds,
         string userAgent,
         ICollection<int> secretRule,
         string secretKey,
@@ -24,7 +25,7 @@ public class HeartBeatRequest
         Id = JsonConvert.SerializeObject(new[] { parentId, areaID, seqNumber, roomId });
         Ets = ets;
         Benchmark = secretKey;
-        Time = 60;
+        Time = intervalSeconds;
         Ts = timestamp;
         Ua = userAgent;
         Csrf = csrf;
@@ -41,7 +42,7 @@ public class HeartBeatRequest
             buvid,
             uuid,
             ets,
-            time = 60,
+            time = intervalSeconds,
             ts = timestamp,
         };
         string jsonString = JsonConvert.SerializeObject(json);

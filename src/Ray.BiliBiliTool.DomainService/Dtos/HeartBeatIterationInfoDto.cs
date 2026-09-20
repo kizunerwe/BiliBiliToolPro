@@ -23,4 +23,13 @@ public class HeartBeatIterationInfoDto(
 
     // 连续失败的次数
     public int FailedTimes { get; set; }
+
+    // 当前服务端心跳链使用的序号，重新进入直播间后从 0 开始。
+    public int ChainSequence { get; set; }
+
+    public int HeartBeatIntervalSeconds { get; set; } = 60;
+
+    public bool NeedsReenter { get; set; }
+
+    public int RebuildCount { get; set; }
 }

@@ -22,8 +22,9 @@ public class VideoDomainService(
     IVideoWithoutCookieApi videoWithoutCookieApi,
     RankingVideoCache rankingVideoCache,
     ITaskDelay taskDelay
-) : IVideoDomainService
+) : IVideoDomainService, ICancellableVideoDomainService
 {
+    private static readonly TimeSpan ShareRetryDelay = TimeSpan.FromSeconds(1);
     private readonly DailyTaskOptions _dailyTaskOptions = dailyTaskOptions.CurrentValue;
     private readonly Dictionary<string, int> _expDic = Config.Constants.ExpDic;
 
@@ -187,9 +188,13 @@ public class VideoDomainService(
         return re.Data.Page.Count;
     }
 
+    public Task<TaskStepResult> WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck) =>
+        WatchAndShareVideo(dailyTaskStatus, ck, CancellationToken.None);
+
     public async Task<TaskStepResult> WatchAndShareVideo(
         DailyTaskInfo dailyTaskStatus,
-        BiliCookie ck
+        BiliCookie ck,
+        CancellationToken cancellationToken
     )
     {
         if (_dailyTaskOptions.IsWatchVideo == false && _dailyTaskOptions.IsShareVideo == false)
@@ -199,11 +204,13 @@ public class VideoDomainService(
 
         if (dailyTaskStatus.Watch && dailyTaskStatus.Share)
         {
+            logger.LogInformation("今日观看和分享任务均已完成，不需要重复执行");
             return TaskStepResult.Skip("今日观看和分享任务均已完成");
         }
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var targetVideo = await GetRandomVideoForWatchAndShare(ck);
             if (targetVideo == null)
                 return TaskStepResult.Fail("未找到可用视频");
@@ -223,7 +230,7 @@ public class VideoDomainService(
                 }
             }
 
-            if (!dailyTaskStatus.Watch || !_dailyTaskOptions.IsWatchVideo)
+            if (dailyTaskStatus.Watch || !_dailyTaskOptions.IsWatchVideo)
                 logger.LogInformation("今天已经观看过了，不需要再看啦");
 
             if (!dailyTaskStatus.Share && _dailyTaskOptions.IsShareVideo)
@@ -231,8 +238,9 @@ public class VideoDomainService(
                 if (!watched && !await OpenVideo(targetVideo, ck))
                     return TaskStepResult.Fail("打开视频失败，无法分享");
 
-                if (!await ShareVideoForTaskAsync(targetVideo, ck))
-                    return TaskStepResult.Fail("视频分享被接口拒绝");
+                var shareResult = await ShareVideoForTaskAsync(targetVideo, ck, cancellationToken);
+                if (shareResult.Status == TaskStepStatus.Failed)
+                    return shareResult;
             }
             else
             {
@@ -242,6 +250,10 @@ public class VideoDomainService(
             return failed
                 ? TaskStepResult.Fail(failureReason ?? "观看、分享视频失败")
                 : TaskStepResult.Success();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -302,21 +314,70 @@ public class VideoDomainService(
         return true;
     }
 
-    private async Task<bool> ShareVideoForTaskAsync(VideoInfoDto videoInfo, BiliCookie ck)
+    private async Task<TaskStepResult> ShareVideoForTaskAsync(
+        VideoInfoDto videoInfo,
+        BiliCookie ck,
+        CancellationToken cancellationToken
+    )
     {
+        ShareVideoRequest CreateRequest() => new(long.Parse(videoInfo.Aid), ck.BiliJct);
+
         var response = await videoApi.ShareVideo(
-            new ShareVideoRequest(long.Parse(videoInfo.Aid), ck.BiliJct),
-            ck.ToString()
+            CreateRequest(),
+            ck.ToString(),
+            GetVideoReferer(videoInfo)
         );
+        if (response?.Code == -403)
+        {
+            logger.LogWarning(
+                "视频分享返回-403，将在{delaySeconds}秒后重试一次，aid：{aid}",
+                ShareRetryDelay.TotalSeconds,
+                videoInfo.Aid
+            );
+            await taskDelay.Delay(ShareRetryDelay, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            response = await videoApi.ShareVideo(
+                CreateRequest(),
+                ck.ToString(),
+                GetVideoReferer(videoInfo)
+            );
+            if (response?.Code == -403)
+            {
+                logger.LogWarning("视频分享重试一次后仍被-403拒绝，aid：{aid}", videoInfo.Aid);
+            }
+        }
+        if (response is null)
+        {
+            string reason = $"视频分享失败：接口未返回有效响应（aid：{videoInfo.Aid}）";
+            logger.LogError(
+                "{reason}；设备Cookie：{cookieState}",
+                reason,
+                GetDeviceCookieState(ck)
+            );
+            return TaskStepResult.Fail(reason);
+        }
+
         if (response.Code != 0)
         {
-            logger.LogError("视频分享失败，原因: {msg}", response.Message);
-            return false;
+            var code = response.Code == int.MinValue ? "业务码缺失" : response.Code.ToString();
+            var message = string.IsNullOrWhiteSpace(response.Message)
+                ? "未提供原因"
+                : response.Message.Trim();
+            logger.LogError(
+                "视频分享失败，aid：{aid}，业务码：{code}，原因：{message}；设备Cookie：{cookieState}",
+                videoInfo.Aid,
+                code,
+                message,
+                GetDeviceCookieState(ck)
+            );
+            return TaskStepResult.Fail(
+                $"视频分享被接口拒绝（aid：{videoInfo.Aid}，业务码：{code}，原因：{message}）"
+            );
         }
 
         _expDic.TryGetValue("每日观看视频", out int exp);
         logger.LogInformation("视频分享成功，经验+{exp} √", exp);
-        return true;
+        return TaskStepResult.Success();
     }
 
     /// <summary>
@@ -413,7 +474,21 @@ public class VideoDomainService(
     public async Task ShareVideo(VideoInfoDto videoInfo, BiliCookie ck)
     {
         var request = new ShareVideoRequest(long.Parse(videoInfo.Aid), ck.BiliJct);
-        BiliApiResponse apiResponse = await videoApi.ShareVideo(request, ck.ToString());
+        BiliApiResponse apiResponse = await videoApi.ShareVideo(
+            request,
+            ck.ToString(),
+            GetVideoReferer(videoInfo)
+        );
+
+        if (apiResponse is null)
+        {
+            logger.LogError(
+                "视频分享失败：接口未返回有效响应（aid：{aid}）；设备Cookie：{cookieState}",
+                videoInfo.Aid,
+                GetDeviceCookieState(ck)
+            );
+            return;
+        }
 
         if (apiResponse.Code == 0)
         {
@@ -422,8 +497,43 @@ public class VideoDomainService(
         }
         else
         {
-            logger.LogError("视频分享失败，原因: {msg}", apiResponse.Message);
+            var code =
+                apiResponse.Code == int.MinValue ? "业务码缺失" : apiResponse.Code.ToString();
+            var message = string.IsNullOrWhiteSpace(apiResponse.Message)
+                ? "未提供原因"
+                : apiResponse.Message.Trim();
+            logger.LogError(
+                "视频分享失败，aid：{aid}，业务码：{code}，原因：{message}；设备Cookie：{cookieState}",
+                videoInfo.Aid,
+                code,
+                message,
+                GetDeviceCookieState(ck)
+            );
         }
+    }
+
+    private static string GetVideoReferer(VideoInfoDto videoInfo)
+    {
+        string videoId = string.IsNullOrWhiteSpace(videoInfo.Bvid)
+            ? $"av{videoInfo.Aid}"
+            : videoInfo.Bvid.Trim();
+        return $"https://www.bilibili.com/video/{videoId}";
+    }
+
+    private static string GetDeviceCookieState(BiliCookie ck)
+    {
+        string[] keys = ["buvid3", "buvid4", "buvid_fp", "b_nut"];
+        return string.Join(
+            "，",
+            keys.Select(key =>
+                $"{key}={(
+                    ck.CookieItemDictionary.TryGetValue(key, out string? value)
+                    && !string.IsNullOrWhiteSpace(value)
+                        ? "存在"
+                        : "缺失"
+                )}"
+            )
+        );
     }
 
     /// <summary>

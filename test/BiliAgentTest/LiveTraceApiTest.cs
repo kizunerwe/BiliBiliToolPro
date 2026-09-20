@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Ray.BiliBiliTool.Agent;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos.Live;
@@ -18,7 +19,7 @@ namespace BiliAgentTest
         }
 
         [Fact]
-        public void WebHeartBeat_Normal_Success()
+        public async Task WebHeartBeat_Normal_Success()
         {
             using var scope = Global.ServiceProviderRoot.CreateScope();
 
@@ -27,7 +28,7 @@ namespace BiliAgentTest
 
             var request = new WebHeartBeatRequest(63666, 60);
 
-            var re = api.WebHeartBeat(request, null).Result;
+            var re = await api.WebHeartBeat(request, null);
 
             Assert.Equal(0, re.Code);
             Assert.Equal("0", re.Message);

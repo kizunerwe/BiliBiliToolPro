@@ -30,11 +30,17 @@ public class LiveFansMedalAppService(
         }
 
         var steps = new TaskStepAccumulator();
-        await steps.RunAsync("发送弹幕", () => liveDomainService.SendDanmakuToFansMedalLive(ck));
-        await steps.RunAsync("点赞直播间", () => liveDomainService.LikeFansMedalLive(ck));
+        await steps.RunAsync(
+            "发送弹幕",
+            () => liveDomainService.SendDanmakuToFansMedalLive(ck, cancellationToken)
+        );
+        await steps.RunAsync(
+            "点赞直播间",
+            () => liveDomainService.LikeFansMedalLive(ck, cancellationToken)
+        );
         await steps.RunAsync(
             "直播时长挂机",
-            () => liveDomainService.SendHeartBeatToFansMedalLive(ck)
+            () => liveDomainService.SendHeartBeatToFansMedalLive(ck, cancellationToken)
         );
         steps.ThrowIfFailed("直播粉丝牌任务");
     }

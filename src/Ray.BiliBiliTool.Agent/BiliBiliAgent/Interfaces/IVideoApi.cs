@@ -20,7 +20,8 @@ public interface IVideoApi : IBiliBiliApi
     [HttpPost("/x/web-interface/share/add")]
     Task<BiliApiResponse> ShareVideo(
         [FormContent] ShareVideoRequest request,
-        [Header("Cookie")] string ck
+        [Header("Cookie")] string ck,
+        [Header("Referer")] string referer
     );
 
     /// <summary>

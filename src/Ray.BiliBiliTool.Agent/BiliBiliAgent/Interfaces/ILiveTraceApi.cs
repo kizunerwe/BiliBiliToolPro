@@ -16,12 +16,14 @@ public interface ILiveTraceApi : IBiliBiliApi
     [HttpPost("/xlive/data-interface/v1/x25Kn/E")]
     Task<BiliApiResponse<HeartBeatResponse>> EnterRoom(
         [FormContent] EnterRoomRequest request,
-        [Header("Cookie")] string ck
+        [Header("Cookie")] string ck,
+        CancellationToken cancellationToken = default
     );
 
     [HttpPost("/xlive/data-interface/v1/x25Kn/X")]
     Task<BiliApiResponse<HeartBeatResponse>> HeartBeat(
         [FormContent] HeartBeatRequest request,
-        [Header("Cookie")] string ck
+        [Header("Cookie")] string ck,
+        CancellationToken cancellationToken = default
     );
 }
