@@ -380,3 +380,7 @@ bruno/.env
 
 # db
 src/**/BiliBiliTool.db*
+
+# 本地任务状态与临时目录
+.tmp/
+CURRENT_TASK.md

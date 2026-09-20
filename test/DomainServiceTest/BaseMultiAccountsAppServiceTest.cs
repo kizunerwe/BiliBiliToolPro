@@ -33,6 +33,27 @@ public class BaseMultiAccountsAppServiceTest
         Assert.Contains("1", exception.Message);
     }
 
+    [Fact]
+    public async Task DoTaskAsync_ShouldPropagateCancellationWithoutProcessingMoreAccounts()
+    {
+        var cookieFactory = new CookieStrFactory<BiliCookie>(
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(
+                    new Dictionary<string, string?>
+                    {
+                        ["BiliBiliCookies:0"] = "DedeUserID=1;SESSDATA=a;bili_jct=a;buvid3=a",
+                        ["BiliBiliCookies:1"] = "DedeUserID=2;SESSDATA=b;bili_jct=b;buvid3=b",
+                    }
+                )
+                .Build()
+        );
+        var service = new CancelingMultiAccountsAppService(cookieFactory);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.DoTaskAsync());
+
+        Assert.Equal(["1"], service.ProcessedUserIds);
+    }
+
     private sealed class TestMultiAccountsAppService(CookieStrFactory<BiliCookie> cookieFactory)
         : BaseMultiAccountsAppService(NullLogger.Instance, cookieFactory)
     {
@@ -47,6 +68,22 @@ public class BaseMultiAccountsAppServiceTest
             return ck.UserId == "1"
                 ? Task.FromException(new InvalidOperationException("failed"))
                 : Task.CompletedTask;
+        }
+    }
+
+    private sealed class CancelingMultiAccountsAppService(
+        CookieStrFactory<BiliCookie> cookieFactory
+    ) : BaseMultiAccountsAppService(NullLogger.Instance, cookieFactory)
+    {
+        public List<string> ProcessedUserIds { get; } = [];
+
+        protected override Task DoTaskAccountAsync(
+            BiliCookie ck,
+            CancellationToken cancellationToken = default
+        )
+        {
+            ProcessedUserIds.Add(ck.UserId);
+            return Task.FromException(new OperationCanceledException());
         }
     }
 }

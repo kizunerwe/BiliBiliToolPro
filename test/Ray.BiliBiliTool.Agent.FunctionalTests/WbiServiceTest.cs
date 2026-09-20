@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -25,7 +26,7 @@ public class WbiServiceTest
     }
 
     [Fact]
-    public async void SetWridAsync_SendRequest_SetWridSuccess()
+    public async Task SetWridAsync_SendRequest_SetWridSuccess()
     {
         // Arrange
         var upId = 1585227649;

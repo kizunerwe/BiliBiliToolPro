@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -11,6 +12,7 @@ using Ray.BiliBiliTool.Config;
 using Ray.BiliBiliTool.Config.Options;
 using Ray.BiliBiliTool.Console;
 using Ray.BiliBiliTool.Infrastructure;
+using Ray.BiliBiliTool.Infrastructure.Cookie;
 using Xunit;
 
 namespace ConfigTest
@@ -18,7 +20,7 @@ namespace ConfigTest
     public class UnitTest1
     {
         [Fact]
-        public void WebProxyTest()
+        public async Task WebProxyTest()
         {
             Program.CreateHost(new string[] { });
             string proxyAddress = Global.ConfigurationRoot["Security:WebProxy"];
@@ -47,8 +49,8 @@ namespace ConfigTest
                 HttpClient.DefaultProxy = webProxy;
 
                 HttpClient httpClient = new HttpClient();
-                var response = httpClient.GetAsync("http://api.ipify.org/");
-                var resultIp = response.Result.Content.ReadAsStringAsync().Result;
+                var response = await httpClient.GetAsync("http://api.ipify.org/");
+                var resultIp = await response.Content.ReadAsStringAsync();
                 Debug.WriteLine(String.Format("��ǰIP�� {0}", resultIp));
             }
         }
@@ -66,7 +68,11 @@ namespace ConfigTest
             ];
             Debug.WriteLine(logLevel);
 
-            var cookie = Global.ServiceProviderRoot.GetRequiredService<BiliCookie>();
+            var cookieFactory = Global.ServiceProviderRoot.GetRequiredService<
+                CookieStrFactory<BiliCookie>
+            >();
+            Assert.True(cookieFactory.Count > 0);
+            var cookie = cookieFactory.GetCookie(0);
 
             Debug.WriteLine(
                 JsonSerializer.Serialize(cookie, new JsonSerializerOptions { WriteIndented = true })

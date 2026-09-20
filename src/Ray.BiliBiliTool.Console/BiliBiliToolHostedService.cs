@@ -18,25 +18,29 @@ public class BiliBiliToolHostedService(
     IConfiguration configuration,
     ILogger<BiliBiliToolHostedService> logger,
     IOptionsMonitor<SecurityOptions> securityOptions
-) : IHostedService
+) : BackgroundService
 {
     private readonly SecurityOptions _securityOptions = securityOptions.CurrentValue;
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
             logger.LogInformation("BiliBiliToolPro 开始运行..." + Environment.NewLine);
 
-            bool pass = await PreCheckAsync(cancellationToken);
+            bool pass = await PreCheckAsync(stoppingToken);
             if (!pass)
                 return;
 
-            await RandomSleepAsync(cancellationToken);
+            await RandomSleepAsync(stoppingToken);
 
-            string[] tasks = await ReadTargetTasksAsync(cancellationToken);
+            string[] tasks = await ReadTargetTasksAsync(stoppingToken);
             logger.LogInformation("【目标任务】{tasks}", string.Join(",", tasks));
-            await DoTasksAsync(tasks, cancellationToken);
+            await DoTasksAsync(tasks, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            logger.LogInformation("收到停止信号，正在结束任务");
         }
         catch (Exception ex)
         {
@@ -58,11 +62,6 @@ public class BiliBiliToolHostedService(
             //自动退出
             applicationLifetime.StopApplication();
         }
-    }
-
-    public Task StopAsync(CancellationToken cancellationToken)
-    {
-        return Task.CompletedTask;
     }
 
     private Task<bool> PreCheckAsync(CancellationToken cancellationToken)
@@ -134,12 +133,17 @@ public class BiliBiliToolHostedService(
         var failedTasks = new List<string>();
         foreach (string task in tasks)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var type = TaskTypeFactory.Get(task);
                 IAppService appService = (IAppService)
                     scope.ServiceProvider.GetRequiredService(type);
                 await appService.DoTaskAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {

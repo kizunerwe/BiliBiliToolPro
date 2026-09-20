@@ -313,8 +313,11 @@ public class VipBigPointDomainServiceTest
 
     private sealed class FakeVideoApiWithEmptyBangumi : IVideoApi
     {
-        public Task<BiliApiResponse> ShareVideo(ShareVideoRequest request, string ck) =>
-            throw new NotImplementedException();
+        public Task<BiliApiResponse> ShareVideo(
+            ShareVideoRequest request,
+            string ck,
+            string referer
+        ) => throw new NotImplementedException();
 
         public Task<BiliApiResponse> UploadVideoHeartbeat(
             UploadVideoHeartbeatRequest request,
@@ -352,8 +355,11 @@ public class VipBigPointDomainServiceTest
 
     private sealed class FakeVideoApiWithSingleBangumi : IVideoApi
     {
-        public Task<BiliApiResponse> ShareVideo(ShareVideoRequest request, string ck) =>
-            throw new NotImplementedException();
+        public Task<BiliApiResponse> ShareVideo(
+            ShareVideoRequest request,
+            string ck,
+            string referer
+        ) => throw new NotImplementedException();
 
         public Task<BiliApiResponse> UploadVideoHeartbeat(
             UploadVideoHeartbeatRequest request,
@@ -444,8 +450,10 @@ public class VipBigPointDomainServiceTest
             CancellationToken cancellationToken
         ) => Task.FromResult(true);
 
-        public Task<TaskStepResult> WatchAndShareVideo(DailyTaskInfo dailyTaskStatus, BiliCookie ck) =>
-            throw new NotImplementedException();
+        public Task<TaskStepResult> WatchAndShareVideo(
+            DailyTaskInfo dailyTaskStatus,
+            BiliCookie ck
+        ) => throw new NotImplementedException();
 
         public Task WatchVideo(VideoInfoDto videoInfo, BiliCookie ck) =>
             throw new NotImplementedException();

@@ -37,7 +37,7 @@ namespace LogTest
             var msg = LogConstants.Msg2 + "开始推送";
 
             var result = await client.PushMessageAsync(msg, title);
-            Debug.WriteLine(result.Content.ReadAsStringAsync().Result);
+            Debug.WriteLine(await result.Content.ReadAsStringAsync());
         }
     }
 }

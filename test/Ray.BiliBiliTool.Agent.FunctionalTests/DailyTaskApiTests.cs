@@ -43,7 +43,7 @@ public class DailyTaskApiTests
     public async Task GetDonateCoinExp_Normal_Success()
     {
         // Act
-        BiliApiResponse<int> re = await _api.GetDonateCoinExpAsync(null);
+        BiliApiResponse<int?> re = await _api.GetDonateCoinExpAsync(null);
 
         // Arrange
 

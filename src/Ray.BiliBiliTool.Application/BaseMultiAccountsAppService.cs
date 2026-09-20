@@ -25,6 +25,10 @@ public abstract class BaseMultiAccountsAppService(
                 var ck = cookieStrFactory.GetCookie(i);
                 await DoTaskAccountAsync(ck, cancellationToken);
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception e)
             {
                 failedAccounts.Add((i, e));

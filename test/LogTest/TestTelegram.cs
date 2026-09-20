@@ -30,7 +30,7 @@ namespace LogTest
             string msg = LogConstants.Msg2;
 
             var result = await client.PushMessageAsync(msg, "标题");
-            Debug.WriteLine(result.Content.ReadAsStringAsync().Result);
+            Debug.WriteLine(await result.Content.ReadAsStringAsync());
 
             /*
              * 如果指定markdown，星号会导致推送失败

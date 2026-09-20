@@ -32,7 +32,7 @@ namespace LogTest
             string msg = LogConstants.Msg2;
 
             var result = await client.PushMessageAsync(msg);
-            Debug.WriteLine(result.Content.ReadAsStringAsync().Result);
+            Debug.WriteLine(await result.Content.ReadAsStringAsync());
 
             /*
              * server酱的换行有问题，一个newline换不了，要两个
@@ -47,7 +47,7 @@ namespace LogTest
             string msg = LogConstants.Msg2;
 
             var result = await client.PushMessageAsync(msg, "测试");
-            Debug.WriteLine(result.Content.ReadAsStringAsync().Result);
+            Debug.WriteLine(await result.Content.ReadAsStringAsync());
 
             /*
              * server酱的换行有问题，一个newline换不了，要两个

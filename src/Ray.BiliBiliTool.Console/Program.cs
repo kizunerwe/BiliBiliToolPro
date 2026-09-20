@@ -16,12 +16,6 @@ public class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        System.Console.CancelKeyPress += (sender, eventArgs) =>
-        {
-            eventArgs.Cancel = true;
-            Environment.Exit(0);
-        };
-
         PrintLogo();
 
         IHost host = CreateHost(args);

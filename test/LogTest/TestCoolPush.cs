@@ -35,7 +35,7 @@ namespace LogTest
             string msg = LogConstants.Msg2;
 
             var result = await client.PushMessageAsync(msg);
-            Debug.WriteLine(result.Content.ReadAsStringAsync().Result);
+            Debug.WriteLine(await result.Content.ReadAsStringAsync());
         }
     }
 }
