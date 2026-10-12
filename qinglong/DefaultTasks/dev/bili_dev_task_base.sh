@@ -490,8 +490,8 @@ install_dotnet() {
 get_download_url() {
     eval $invocation
 
-    tag=$1
-    url="${github_proxy}https://github.com/${bili_repo}/releases/download/$tag/bilibili-tool-pro-v$tag-$current_os-$machine_architecture.zip"
+    tag=${1#v}
+    url="${github_proxy}https://github.com/${bili_repo}/releases/download/v$tag/bilibili-tool-pro-v$tag-$current_os-$machine_architecture.zip"
     say "下载地址：$url"
     echo $url
     return 0
@@ -552,14 +552,14 @@ install_bilitool() {
     local zip_file_name
     local staged_tag
 
-    if ! latest_release="$(curl --fail --show-error --location --retry 3 "https://api.github.com/repos/$bili_repo/releases/latest")"; then
+    if ! latest_release="$(curl --fail --show-error --location --retry 3 -o /dev/null -w "%{url_effective}" "https://github.com/$bili_repo/releases/latest")"; then
         say_err "无法获取GitHub最新版本信息"
         return 1
     fi
     if ! check_jq; then
         return 1
     fi
-    if ! latest_tag="$(printf '%s' "$latest_release" | jq -r '.tag_name')"; then
+    if ! latest_tag="$(printf '%s' "$latest_release" | sed 's|.*/tag/||')"; then
         say_err "无法解析GitHub最新版本信息"
         return 1
     fi
